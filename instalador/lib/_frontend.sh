@@ -175,7 +175,7 @@ server {
 }
 END
 
-ln -s /etc/nginx/sites-available/${instancia_add}-frontend /etc/nginx/sites-enabled
+ln -sf /etc/nginx/sites-available/${instancia_add}-frontend /etc/nginx/sites-enabled/${instancia_add}-frontend
 EOF
 
   sleep 2

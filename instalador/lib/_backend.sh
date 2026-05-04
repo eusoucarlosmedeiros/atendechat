@@ -15,16 +15,17 @@ backend_redis_create() {
 
   sudo su - root <<EOF
   usermod -aG docker deploy
+  # Remove container redis antigo se existir e recria (idempotente)
+  docker rm -f redis-${instancia_add} >/dev/null 2>&1 || true
   docker run --name redis-${instancia_add} -p ${redis_port}:6379 --restart always --detach redis redis-server --requirepass ${mysql_root_password}
-  
+
   sleep 2
-  sudo su - postgres
-  createdb ${instancia_add};
-  psql
-  CREATE USER ${instancia_add} SUPERUSER INHERIT CREATEDB CREATEROLE;
-  ALTER USER ${instancia_add} PASSWORD '${mysql_root_password}';
-  \q
-  exit
+  # Cria role e banco no postgres apenas se nao existirem (idempotente)
+  sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='${instancia_add}'" | grep -q 1 || \
+    sudo -u postgres psql -c "CREATE USER ${instancia_add} SUPERUSER INHERIT CREATEDB CREATEROLE;"
+  sudo -u postgres psql -c "ALTER USER ${instancia_add} PASSWORD '${mysql_root_password}';"
+  sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='${instancia_add}'" | grep -q 1 || \
+    sudo -u postgres createdb -O ${instancia_add} ${instancia_add}
 EOF
 
 sleep 2
@@ -249,7 +250,7 @@ server {
   }
 }
 END
-ln -s /etc/nginx/sites-available/${instancia_add}-backend /etc/nginx/sites-enabled
+ln -sf /etc/nginx/sites-available/${instancia_add}-backend /etc/nginx/sites-enabled/${instancia_add}-backend
 EOF
 
   sleep 2
