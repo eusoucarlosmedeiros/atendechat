@@ -199,46 +199,36 @@ software_dominio() {
 }
 
 inquiry_options() {
-  
+
+  # === Instalação automática (sem perguntas) ===
+  # Senha do usuário deploy + banco de dados
+  mysql_root_password="atende25"
+
+  # Repositório a ser clonado para a VPS
+  link_git="https://github.com/eusoucarlosmedeiros/atendechat.git"
+
+  # Nome da instância/empresa
+  instancia_add="atendechat"
+
+  # Limites
+  max_whats="10"
+  max_user="10"
+
+  # Domínios
+  frontend_url="https://crm.apption.com.br"
+  backend_url="https://apicrm.apption.com.br"
+
+  # Portas
+  frontend_port="3000"
+  backend_port="4000"
+  redis_port="5000"
+
   print_banner
-  printf "${WHITE} 💻 Bem vindo(a) ao Gerenciador Atendechat, Selecione abaixo a proxima ação!${GRAY_LIGHT}"
-  printf "\n\n"
-  printf "   [0] Instalar Atendechat\n"
-  printf "   [1] Atualizar Atendechat\n"
-  printf "   [2] Deletar Atendechat\n"
-  printf "   [3] Bloquear Atendechat\n"
-  printf "   [4] Desbloquear Atendechat\n"
-  printf "   [5] Alter. dominio Atendechat\n"
-  printf "\n"
-  read -p "> " option
-
-  case "${option}" in
-    0) get_urls ;;
-
-    1) 
-      software_update 
-      exit
-      ;;
-
-    2) 
-      software_delete 
-      exit
-      ;;
-    3) 
-      software_bloquear 
-      exit
-      ;;
-    4) 
-      software_desbloquear 
-      exit
-      ;;
-    5) 
-      software_dominio 
-      exit
-      ;;        
-
-    *) exit ;;
-  esac
+  printf "${WHITE} 💻 Modo silencioso ativado — instalando atendechat${GRAY_LIGHT}\n"
+  printf "${WHITE}    Frontend : ${frontend_url}${GRAY_LIGHT}\n"
+  printf "${WHITE}    Backend  : ${backend_url}${GRAY_LIGHT}\n"
+  printf "${WHITE}    Instância: ${instancia_add}${GRAY_LIGHT}\n\n"
+  sleep 2
 }
 
 
