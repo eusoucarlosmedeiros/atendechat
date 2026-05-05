@@ -35,6 +35,10 @@ const sessions: Session[] = [];
 
 const retriesQrCodeMap = new Map<number, number>();
 
+// Evita disparar initWASocket varias vezes para o mesmo whatsappId em paralelo,
+// que era a causa de WebSockets fantasmas e do erro "device_removed".
+const initInProgress = new Set<number>();
+
 export const getWbot = (whatsappId: number): Session => {
   const sessionIndex = sessions.findIndex(s => s.id === whatsappId);
 
@@ -51,10 +55,18 @@ export const removeWbot = async (
   try {
     const sessionIndex = sessions.findIndex(s => s.id === whatsappId);
     if (sessionIndex !== -1) {
+      const session = sessions[sessionIndex];
+      try {
+        session.ev.removeAllListeners("connection.update");
+        session.ev.removeAllListeners("creds.update");
+        session.ev.removeAllListeners("messages.upsert");
+      } catch (e) { /* noop */ }
+
       if (isLogout) {
-        sessions[sessionIndex].logout();
-        sessions[sessionIndex].ws.close();
+        try { await session.logout(); } catch (e) { /* noop */ }
       }
+      try { session.ws.close(); } catch (e) { /* noop */ }
+      try { (session.end as any)?.(undefined); } catch (e) { /* noop */ }
 
       sessions.splice(sessionIndex, 1);
     }
@@ -66,6 +78,16 @@ export const removeWbot = async (
 export const initWASocket = async (whatsapp: Whatsapp): Promise<Session> => {
   return new Promise(async (resolve, reject) => {
     try {
+      // Lock para evitar inicializacoes concorrentes da mesma sessao.
+      if (initInProgress.has(whatsapp.id)) {
+        logger.warn(`initWASocket ignorado: sessao ${whatsapp.id} ja esta inicializando`);
+        return resolve(undefined as any);
+      }
+      initInProgress.add(whatsapp.id);
+
+      // Garante que qualquer socket antigo da mesma sessao seja totalmente fechado.
+      await removeWbot(whatsapp.id, false);
+
       (async () => {
         const io = getIO();
 
@@ -73,7 +95,10 @@ export const initWASocket = async (whatsapp: Whatsapp): Promise<Session> => {
           where: { id: whatsapp.id }
         });
 
-        if (!whatsappUpdate) return;
+        if (!whatsappUpdate) {
+          initInProgress.delete(whatsapp.id);
+          return;
+        }
 
         const { id, name, provider } = whatsappUpdate;
 
@@ -154,32 +179,30 @@ export const initWASocket = async (whatsapp: Whatsapp): Promise<Session> => {
             );
 
             if (connection === "close") {
-              if ((lastDisconnect?.error as Boom)?.output?.statusCode === 403) {
+              initInProgress.delete(whatsapp.id);
+              const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
+              const errorContent = (lastDisconnect?.error as any)?.data?.content?.[0]?.attrs?.type;
+
+              // device_removed = WhatsApp matou o device por conflito.
+              // Tratar como logout: limpar session e exigir novo QR, sem reconectar em loop.
+              const isDeviceRemoved = errorContent === "device_removed";
+
+              if (statusCode === 403 || isDeviceRemoved || statusCode === DisconnectReason.loggedOut) {
                 await whatsapp.update({ status: "PENDING", session: "" });
                 await DeleteBaileysService(whatsapp.id);
                 io.to(`company-${whatsapp.companyId}-mainchannel`).emit(`company-${whatsapp.companyId}-whatsappSession`, {
                   action: "update",
                   session: whatsapp
                 });
-                removeWbot(id, false);
-              }
-              if (
-                (lastDisconnect?.error as Boom)?.output?.statusCode !==
-                DisconnectReason.loggedOut
-              ) {
-                removeWbot(id, false);
-                setTimeout(
-                  () => StartWhatsAppSession(whatsapp, whatsapp.companyId),
-                  2000
-                );
+                await removeWbot(id, false);
+                if (statusCode === DisconnectReason.loggedOut) {
+                  setTimeout(
+                    () => StartWhatsAppSession(whatsapp, whatsapp.companyId),
+                    2000
+                  );
+                }
               } else {
-                await whatsapp.update({ status: "PENDING", session: "" });
-                await DeleteBaileysService(whatsapp.id);
-                io.to(`company-${whatsapp.companyId}-mainchannel`).emit(`company-${whatsapp.companyId}-whatsappSession`, {
-                  action: "update",
-                  session: whatsapp
-                });
-                removeWbot(id, false);
+                await removeWbot(id, false);
                 setTimeout(
                   () => StartWhatsAppSession(whatsapp, whatsapp.companyId),
                   2000
@@ -188,6 +211,7 @@ export const initWASocket = async (whatsapp: Whatsapp): Promise<Session> => {
             }
 
             if (connection === "open") {
+              initInProgress.delete(whatsapp.id);
               await whatsapp.update({
                 status: "CONNECTED",
                 qrcode: "",
@@ -254,6 +278,7 @@ export const initWASocket = async (whatsapp: Whatsapp): Promise<Session> => {
         wsocket.ev.on("creds.update", saveState);
       })();
     } catch (error) {
+      initInProgress.delete(whatsapp.id);
       Sentry.captureException(error);
       console.log(error);
       reject(error);
