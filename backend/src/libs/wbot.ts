@@ -95,17 +95,22 @@ export const initWASocket = async (whatsapp: Whatsapp): Promise<Session> => {
         wsocket = makeWASocket({
           logger: loggerBaileys,
           printQRInTerminal: false,
-          browser: Browsers.appropriate("Desktop"),
+          browser: Browsers.macOS("Desktop"),
           auth: {
             creds: state.creds,
             keys: makeCacheableSignalKeyStore(state.keys, logger),
           },
           version,
           defaultQueryTimeoutMs: undefined,
-          markOnlineOnConnect: false,
+          connectTimeoutMs: 60_000,
+          keepAliveIntervalMs: 30_000,
+          retryRequestDelayMs: 250,
           syncFullHistory: false,
           msgRetryCounterCache,
           shouldIgnoreJid: jid => isJidBroadcast(jid),
+          getMessage: async () => {
+            return { conversation: "" };
+          },
         });
 
         // wsocket = makeWASocket({
