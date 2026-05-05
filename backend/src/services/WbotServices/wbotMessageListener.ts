@@ -454,16 +454,33 @@ const getSenderMessage = (
   return senderId && jidNormalizedUser(senderId);
 };
 
+// WhatsApp 2024+ envia mensagens de novos contatos com JID @lid
+// (LID = Locally Identifiable Device) em vez do telefone @s.whatsapp.net.
+// Se enviarmos resposta para o LID convertido em "@s.whatsapp.net" ela vai pro vazio.
+// Esta funcao resolve o JID para o telefone real, usando senderPn / remoteJidAlt
+// que o baileys 6.7+ injeta na key da mensagem.
+const resolveRealJid = (msg: proto.IWebMessageInfo): string => {
+  const remoteJid = msg.key.remoteJid || "";
+  if (!remoteJid.endsWith("@lid")) return remoteJid;
+  const k = msg.key as any;
+  if (k.senderPn && typeof k.senderPn === "string") return k.senderPn;
+  if (k.remoteJidAlt && typeof k.remoteJidAlt === "string") return k.remoteJidAlt;
+  // Fallback: nada disponivel; mantem o LID (mensagens nao serao entregues,
+  // mas evita criar contato com numero invalido).
+  return remoteJid;
+};
+
 const getContactMessage = async (msg: proto.IWebMessageInfo, wbot: Session) => {
   const isGroup = msg.key.remoteJid.includes("g.us");
-  const rawNumber = msg.key.remoteJid.replace(/\D/g, "");
+  const realJid = resolveRealJid(msg);
+  const rawNumber = realJid.replace(/\D/g, "");
   return isGroup
     ? {
         id: getSenderMessage(msg, wbot),
         name: msg.pushName
       }
     : {
-        id: msg.key.remoteJid,
+        id: realJid,
         name: msg.key.fromMe ? rawNumber : msg.pushName
       };
 };
@@ -726,14 +743,14 @@ const handleOpenAi = async (
         .trim();
     }
 
-    const sentMessage = await wbot.sendMessage(msg.key.remoteJid!, {
+    const sentMessage = await wbot.sendMessage(resolveRealJid(msg), {
       text: response!
     });
     await verifyMessage(sentMessage!, ticket, contact);
 
     /*
     if (prompt.voice === "texto") {
-      const sentMessage = await wbot.sendMessage(msg.key.remoteJid!, {
+      const sentMessage = await wbot.sendMessage(resolveRealJid(msg), {
         text: response!
       });
       await verifyMessage(sentMessage!, ticket, contact);
@@ -748,7 +765,7 @@ const handleOpenAi = async (
         "mp3"
       ).then(async () => {
         try {
-          const sendMessage = await wbot.sendMessage(msg.key.remoteJid!, {
+          const sendMessage = await wbot.sendMessage(resolveRealJid(msg), {
             audio: { url: `${publicFolder}/${fileNameWithOutExtension}.mp3` },
             mimetype: "audio/mpeg",
             ptt: true
@@ -797,7 +814,7 @@ const handleOpenAi = async (
         .trim();
     }
     /*if (prompt.voice === "texto") {
-      const sentMessage = await wbot.sendMessage(msg.key.remoteJid!, {
+      const sentMessage = await wbot.sendMessage(resolveRealJid(msg), {
         text: response!
       });
       await verifyMessage(sentMessage!, ticket, contact);
@@ -812,7 +829,7 @@ const handleOpenAi = async (
         "mp3"
       ).then(async () => {
         try {
-          const sendMessage = await wbot.sendMessage(msg.key.remoteJid!, {
+          const sendMessage = await wbot.sendMessage(resolveRealJid(msg), {
             audio: { url: `${publicFolder}/${fileNameWithOutExtension}.mp3` },
             mimetype: "audio/mpeg",
             ptt: true
