@@ -32,8 +32,6 @@ const ListPromptsService = async ({
     }
   }
 
-  logger.info(whereCondition);
-
   const { count, rows: prompts } = await Prompt.findAndCountAll({
     where: { ...whereCondition, companyId },
     include: [
@@ -48,8 +46,6 @@ const ListPromptsService = async ({
     order: [["name", "ASC"]],
   });
   const hasMore = count > offset + prompts.length;
-
-  logger.info(prompts);
 
   return {
     prompts,
