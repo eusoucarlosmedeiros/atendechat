@@ -143,6 +143,26 @@ class Whatsapp extends Model<Whatsapp> {
 
   @Column
   expiresInactiveMessage: string;
+
+  // ----- uazapi (substitui session blob da Baileys) ---------------------
+  // UUID da instancia retornado por POST /instance/init na uazapi.
+  // Unico por linha (index unique).
+  @Column(DataType.STRING)
+  uazapiInstanceId: string;
+
+  // Token de auth da instancia (header `token` em chamadas REST).
+  @Column(DataType.STRING)
+  uazapiToken: string;
+
+  // URL base da uazapi por instancia. Quando NULL, usa env UAZAPI_BASE_URL.
+  // Util para clientes em planos diferentes ou em hosts distintos.
+  @Column(DataType.STRING)
+  uazapiBaseUrl: string;
+
+  // Segredo gerado na criacao da instancia, utilizado para compor a URL
+  // do webhook (ex.: /uazapi/webhook/<secret>). Unico por linha.
+  @Column(DataType.STRING)
+  uazapiWebhookSecret: string;
 }
 
 export default Whatsapp;

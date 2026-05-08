@@ -108,6 +108,17 @@ class Message extends Model<Message> {
   @Default(false)
   @Column
   isEdited: boolean;
+
+  // JID do remetente normalizado (PN) — entregue pela uazapi via
+  // wa_senderJid no payload. Indexado para queries por sender.
+  @Column(DataType.STRING)
+  senderJid: string;
+
+  // LID do remetente quando o WhatsApp expoe (sender_lid no payload uazapi).
+  // Mantido apenas para rastreabilidade/debug — sem indice (raramente
+  // usado em filtro de query).
+  @Column(DataType.STRING)
+  senderLid: string;
 }
 
 export default Message;
