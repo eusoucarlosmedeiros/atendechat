@@ -57,6 +57,7 @@ import {
 import typebotListener from "../TypebotServices/typebotListener";
 import QueueIntegrations from "../../models/QueueIntegrations";
 import ShowQueueIntegrationService from "../QueueIntegrationServices/ShowQueueIntegrationService";
+import { captureLidPnMappingFromMessage } from "../../helpers/LidPnResolver";
 
 const request = require("request");
 
@@ -80,6 +81,10 @@ interface ImessageUpsert {
 interface IMe {
   name: string;
   id: string;
+  // LID (so a parte numerica, sem @lid) — quando o WhatsApp expoe o
+  // Locally Identifiable Device em paralelo ao telefone real. Permite
+  // persistir no Contact.lid para uso posterior em envios.
+  lid?: string;
 }
 
 interface IMessage {
@@ -474,14 +479,27 @@ const getContactMessage = async (msg: proto.IWebMessageInfo, wbot: Session) => {
   const isGroup = msg.key.remoteJid.includes("g.us");
   const realJid = resolveRealJid(msg);
   const rawNumber = realJid.replace(/\D/g, "");
+
+  // Tenta extrair LID independentemente do realJid (pode estar em
+  // remoteJid OU em remoteJidAlt OU em participant). Persistimos para
+  // que o Contact.lid fique populado e o envio futuro use o trilho certo.
+  const k = msg.key as any;
+  const lidCandidates = [k.remoteJid, k.remoteJidAlt, k.participant, k.participantAlt]
+    .filter((j: string | undefined) => typeof j === "string" && j.endsWith("@lid"));
+  const lid = lidCandidates[0]
+    ? (lidCandidates[0] as string).split("@")[0]
+    : undefined;
+
   return isGroup
     ? {
         id: getSenderMessage(msg, wbot),
-        name: msg.pushName
+        name: msg.pushName,
+        lid
       }
     : {
         id: realJid,
-        name: msg.key.fromMe ? rawNumber : msg.pushName
+        name: msg.key.fromMe ? rawNumber : msg.pushName,
+        lid
       };
 };
 
@@ -545,7 +563,8 @@ const verifyContact = async (
     profilePicUrl,
     isGroup: msgContact.id.includes("g.us"),
     companyId,
-    whatsappId: wbot.id
+    whatsappId: wbot.id,
+    lid: msgContact.lid
   };
 
   const contact = CreateOrUpdateContactService(contactData);
@@ -2320,6 +2339,12 @@ const wbotMessageListener = async (
         const messageExists = await Message.count({
           where: { id: message.key.id!, companyId }
         });
+
+        // Captura mapping LID<->PN ANTES do processamento, para que
+        // funcoes downstream (verifyContact, envio de respostas) ja
+        // consigam consultar o mapping correto. Nao bloqueante: erros
+        // sao logados internamente.
+        captureLidPnMappingFromMessage(message, wbot.id).catch(() => {});
 
         if (!messageExists) {
           await handleMessage(message, wbot, companyId);

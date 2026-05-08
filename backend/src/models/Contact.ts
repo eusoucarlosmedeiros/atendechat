@@ -34,6 +34,14 @@ class Contact extends Model<Contact> {
   @Column
   number: string;
 
+  // Locally Identifiable Device do WhatsApp (formato @lid).
+  // Quando o WhatsApp expoe somente o LID (ex.: contato novo, grupo com
+  // privacidade), persistimos aqui para conseguir enviar de volta no
+  // mesmo "trilho" (ja que mandar para <numero>@s.whatsapp.net falha
+  // quando o destinatario so se manifestou via LID).
+  @Column
+  lid: string;
+
   @AllowNull(false)
   @Default("")
   @Column
