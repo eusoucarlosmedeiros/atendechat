@@ -62,9 +62,10 @@ export const StartWhatsAppSession = async (
     }
 
     // 2. Configurar webhook (idempotente)
-    const webhookBase = process.env.UAZAPI_WEBHOOK_BASE_URL;
+    // BACKEND_URL ja existe no .env do projeto — reusamos como base.
+    const webhookBase = process.env.BACKEND_URL;
     if (!webhookBase) {
-      throw new Error("UAZAPI_WEBHOOK_BASE_URL nao configurado em .env");
+      throw new Error("BACKEND_URL nao configurado em .env");
     }
     const webhookUrl = `${webhookBase.replace(/\/$/, "")}/uazapi/webhook/${whatsapp.uazapiWebhookSecret}`;
     await ConfigureWebhook(whatsapp, {
