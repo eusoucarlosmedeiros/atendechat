@@ -6,7 +6,11 @@ import { StartAllWhatsAppsSessions } from "./services/WbotServices/StartAllWhats
 import Company from "./models/Company";
 import { startQueueProcess } from "./queues";
 import { TransferTicketQueue } from "./wbotTransferTicketQueue";
+import { startWebhookEventsCleanup } from "./jobs/webhookEventsCleanup";
 import cron from "node-cron";
+
+// Cleanup job dos WebhookEvents da uazapi (retencao 30d).
+startWebhookEventsCleanup();
 
 const server = app.listen(process.env.PORT, async () => {
   const companies = await Company.findAll();

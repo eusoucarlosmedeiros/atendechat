@@ -32,7 +32,12 @@ import promptRoutes from "./promptRouter";
 import queueIntegrationRoutes from "./queueIntegrationRoutes";
 import forgotsRoutes from "./forgotPasswordRoutes";
 import versionRouter from "./versionRoutes";
+import uazapiWebhookRoutes from "./uazapiWebhookRoutes";
 const routes = Router();
+
+// uazapi webhook — endpoint publico, validado por secret na URL
+// (registrar ANTES das rotas autenticadas para nao passar por isAuth).
+routes.use(uazapiWebhookRoutes);
 
 routes.use(userRoutes);
 routes.use("/auth", authRoutes);
