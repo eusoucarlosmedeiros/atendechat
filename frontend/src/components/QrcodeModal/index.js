@@ -70,7 +70,22 @@ const QrcodeModal = ({ open, onClose, whatsAppId }) => {
           </div>
           <div>
             {qrCode ? (
-              <QRCode value={qrCode} size={256} />
+              // uazapi entrega o QR ja como imagem PNG em base64
+              // (`data:image/png;base64,...`). Nesse caso renderizamos
+              // <img> direto. O fallback <QRCode value=...> e mantido
+              // para compatibilidade caso algum provider devolva a
+              // string raw do QR (formato Baileys legacy).
+              qrCode.startsWith("data:image") ? (
+                <img
+                  src={qrCode}
+                  alt="QR Code"
+                  width={256}
+                  height={256}
+                  style={{ display: "block" }}
+                />
+              ) : (
+                <QRCode value={qrCode} size={256} />
+              )
             ) : (
               <span>{i18n.t("qrCodeModal.waiting")}</span>
             )}
