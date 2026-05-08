@@ -14,9 +14,10 @@ import ContactListItem from "./models/ContactListItem";
 import { isEmpty, isNil, isArray } from "lodash";
 import CampaignSetting from "./models/CampaignSetting";
 import CampaignShipping from "./models/CampaignShipping";
-import GetWhatsappWbot from "./helpers/GetWhatsappWbot";
 import sequelize from "./database";
 import { getMessageOptions } from "./services/WbotServices/SendWhatsAppMedia";
+import SendText from "./services/UazapiServices/send/SendText";
+import SendMedia from "./services/UazapiServices/send/SendMedia";
 import { getIO } from "./libs/socket";
 import path from "path";
 import User from "./models/User";
@@ -647,22 +648,17 @@ async function handleDispatchCampaign(job) {
     const { data } = job;
     const { campaignShippingId, campaignId }: DispatchCampaignData = data;
     const campaign = await getCampaign(campaignId);
-    const wbot = await GetWhatsappWbot(campaign.whatsapp);
+    // wbot Baileys removido — uazapi e usado via SendText/SendMedia abaixo
 
     logger.info("[🏁] - Disparando campanha | CampaignShippingId: " + campaignShippingId + " CampanhaID: " + campaignId);
-
-    if (!wbot) {
-      logger.error(`campaignQueue -> DispatchCampaign -> error: wbot not found`);
-      return;
-    }
 
     if (!campaign.whatsapp) {
       logger.error(`campaignQueue -> DispatchCampaign -> error: whatsapp not found`);
       return;
     }
 
-    if (!wbot?.user?.id) {
-      logger.error(`campaignQueue -> DispatchCampaign -> error: wbot user not found`);
+    if (!campaign.whatsapp.uazapiToken) {
+      logger.error(`campaignQueue -> DispatchCampaign -> error: whatsapp uazapi nao inicializado`);
       return;
     }
 
@@ -679,6 +675,10 @@ async function handleDispatchCampaign(job) {
 
     let body = campaignShipping.message;
 
+    // chatId chega aqui como "<num>@s.whatsapp.net". A uazapi tambem
+    // aceita esse formato — passamos como esta para `number`.
+    const uazapiNumber = chatId;
+
     if (!isNil(campaign.fileListId)) {
 
       logger.info("[🚩] - Recuperando a lista de arquivos | CampaignShippingId: " + campaignShippingId + " CampanhaID: " + campaignId);
@@ -689,9 +689,17 @@ async function handleDispatchCampaign(job) {
         const folder = path.resolve(publicFolder, "fileList", String(files.id))
         for (const [index, file] of files.options.entries()) {
           const options = await getMessageOptions(file.path, path.resolve(folder, file.path), file.name);
-          await wbot.sendMessage(chatId, { ...options });
-
-          logger.info("[🚩] - Enviou arquivo: "+ file.name +" | CampaignShippingId: " + campaignShippingId + " CampanhaID: " + campaignId);
+          if (options && options.type && options.file) {
+            await SendMedia(campaign.whatsapp, {
+              number: uazapiNumber,
+              type: options.type,
+              file: options.file,
+              text: options.text,
+              mimetype: options.mimetype,
+              docName: options.docName
+            });
+            logger.info("[🚩] - Enviou arquivo: " + file.name + " | CampaignShippingId: " + campaignShippingId + " CampanhaID: " + campaignId);
+          }
         };
       } catch (error) {
         logger.info(error);
@@ -706,15 +714,23 @@ async function handleDispatchCampaign(job) {
       const filePath = path.join(publicFolder, campaign.mediaPath);
 
       const options = await getMessageOptions(campaign.mediaName, filePath, body);
-      if (Object.keys(options).length) {
-        await wbot.sendMessage(chatId, { ...options });
+      if (options && options.type && options.file) {
+        await SendMedia(campaign.whatsapp, {
+          number: uazapiNumber,
+          type: options.type,
+          file: options.file,
+          text: options.text,
+          mimetype: options.mimetype,
+          docName: options.docName
+        });
       }
     }
     else {
 
       logger.info("[🚩] - Enviando mensagem de texto da campanha | CampaignShippingId: " + campaignShippingId + " CampanhaID: " + campaignId);
 
-      await wbot.sendMessage(chatId, {
+      await SendText(campaign.whatsapp, {
+        number: uazapiNumber,
         text: body
       });
     }

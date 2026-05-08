@@ -1,15 +1,19 @@
-import { WAMessage, AnyMessageContent } from "baileys";
 import * as Sentry from "@sentry/node";
 import fs from "fs";
 import { exec } from "child_process";
 import path from "path";
 import ffmpegPath from "@ffmpeg-installer/ffmpeg";
-import AppError from "../../errors/AppError";
-import GetTicketWbot from "../../helpers/GetTicketWbot";
-import Ticket from "../../models/Ticket";
 import { lookup } from "mime-types";
+
+import AppError from "../../errors/AppError";
+import Ticket from "../../models/Ticket";
+import ShowWhatsAppService from "../WhatsappService/ShowWhatsAppService";
+import SendMedia, {
+  SendMediaParams,
+  UazapiMediaType
+} from "../UazapiServices/send/SendMedia";
+import { SendMessageResponse } from "../UazapiServices/send/SendText";
 import formatBody from "../../helpers/Mustache";
-import { resolveBestJidForTicket } from "../../helpers/LidPnResolver";
 
 interface Request {
   media: Express.Multer.File;
@@ -26,7 +30,7 @@ const processAudio = async (audio: string): Promise<string> => {
       `${ffmpegPath.path} -i ${audio} -vn -ab 128k -ar 44100 -f ipod ${outputAudio} -y`,
       (error, _stdout, _stderr) => {
         if (error) reject(error);
-        fs.unlinkSync(audio);
+        try { fs.unlinkSync(audio); } catch (_) { /* noop */ }
         resolve(outputAudio);
       }
     );
@@ -40,74 +44,62 @@ const processAudioFile = async (audio: string): Promise<string> => {
       `${ffmpegPath.path} -i ${audio} -vn -ar 44100 -ac 2 -b:a 192k ${outputAudio}`,
       (error, _stdout, _stderr) => {
         if (error) reject(error);
-        fs.unlinkSync(audio);
+        try { fs.unlinkSync(audio); } catch (_) { /* noop */ }
         resolve(outputAudio);
       }
     );
   });
 };
 
+/**
+ * Constroi os params para o /send/media da uazapi a partir de um arquivo
+ * local (path/mimetype/originalname). Retorna pronto para passar ao
+ * wrapper SendMedia.
+ *
+ * file vai como base64 inline — para volumes muito grandes (>10MB) o ideal
+ * seria servir via URL HTTPS publica do nosso backend, mas mantendo
+ * paridade com o comportamento atual usamos base64 por simplicidade.
+ */
 export const getMessageOptions = async (
   fileName: string,
   pathMedia: string,
   body?: string
-): Promise<any> => {
-  const mimeType = lookup(pathMedia) || "";
+): Promise<Partial<SendMediaParams> | null> => {
+  const mimeType = (lookup(pathMedia) || "") as string;
   const typeMessage = mimeType.split("/")[0];
 
   try {
-    if (!mimeType) {
-      throw new Error("Invalid mimetype");
-    }
-    let options: AnyMessageContent;
+    if (!mimeType) throw new Error("Invalid mimetype");
+
+    let type: UazapiMediaType;
+    let finalPath = pathMedia;
+    let mimetype = mimeType;
+    let docName: string | undefined;
 
     if (typeMessage === "video") {
-      options = {
-        video: fs.readFileSync(pathMedia),
-        caption: body ? body : "",
-        fileName: fileName
-        // gifPlayback: true
-      };
+      type = "video";
     } else if (typeMessage === "audio") {
-      const typeAudio = true; //fileName.includes("audio-record-site");
-      const convert = await processAudio(pathMedia);
-      if (typeAudio) {
-        options = {
-          audio: fs.readFileSync(convert),
-          mimetype: typeAudio ? "audio/mp4" : mimeType,
-          caption: body ? body : null,
-          ptt: true
-        };
-      } else {
-        options = {
-          audio: fs.readFileSync(convert),
-          mimetype: typeAudio ? "audio/mp4" : mimeType,
-          caption: body ? body : null,
-          ptt: true
-        };
-      }
-    } else if (typeMessage === "document") {
-      options = {
-        document: fs.readFileSync(pathMedia),
-        caption: body ? body : null,
-        fileName: fileName,
-        mimetype: mimeType
-      };
-    } else if (typeMessage === "application") {
-      options = {
-        document: fs.readFileSync(pathMedia),
-        caption: body ? body : null,
-        fileName: fileName,
-        mimetype: mimeType
-      };
+      type = "ptt"; // mantem comportamento atual: audios sao enviados como PTT
+      finalPath = await processAudio(pathMedia);
+      mimetype = "audio/mp4";
+    } else if (typeMessage === "image") {
+      type = "image";
     } else {
-      options = {
-        image: fs.readFileSync(pathMedia),
-        caption: body ? body : null
-      };
+      // application/pdf, document, etc
+      type = "document";
+      docName = fileName;
     }
 
-    return options;
+    const fileBuffer = fs.readFileSync(finalPath);
+    const fileBase64 = `data:${mimetype};base64,${fileBuffer.toString("base64")}`;
+
+    return {
+      type,
+      file: fileBase64,
+      text: body || undefined,
+      mimetype,
+      docName
+    };
   } catch (e) {
     Sentry.captureException(e);
     console.log(e);
@@ -119,71 +111,57 @@ const SendWhatsAppMedia = async ({
   media,
   ticket,
   body
-}: Request): Promise<WAMessage> => {
+}: Request): Promise<SendMessageResponse> => {
   try {
-    const wbot = await GetTicketWbot(ticket);
+    const whatsapp = await ShowWhatsAppService(ticket.whatsappId, ticket.companyId);
+    const bodyMessage = body ? formatBody(body, ticket.contact) : undefined;
+
+    const number = ticket.isGroup
+      ? `${ticket.contact.number}@g.us`
+      : ticket.contact.number;
 
     const pathMedia = media.path;
-    const typeMessage = media.mimetype.split("/")[0];
-    let options: AnyMessageContent;
-    const bodyMessage = formatBody(body, ticket.contact);
+    const mimetype = media.mimetype;
+    const typeMessage = mimetype.split("/")[0];
+
+    let type: UazapiMediaType;
+    let finalPath = pathMedia;
+    let finalMime = mimetype;
+    let docName: string | undefined;
 
     if (typeMessage === "video") {
-      options = {
-        video: fs.readFileSync(pathMedia),
-        caption: bodyMessage,
-        fileName: media.originalname
-        // gifPlayback: true
-      };
+      type = "video";
     } else if (typeMessage === "audio") {
-      const typeAudio = media.originalname.includes("audio-record-site");
-      if (typeAudio) {
-        const convert = await processAudio(media.path);
-        options = {
-          audio: fs.readFileSync(convert),
-          mimetype: typeAudio ? "audio/mp4" : media.mimetype,
-          ptt: true
-        };
-      } else {
-        const convert = await processAudioFile(media.path);
-        options = {
-          audio: fs.readFileSync(convert),
-          mimetype: typeAudio ? "audio/mp4" : media.mimetype
-        };
-      }
-    } else if (typeMessage === "document" || typeMessage === "text") {
-      options = {
-        document: fs.readFileSync(pathMedia),
-        caption: bodyMessage,
-        fileName: media.originalname,
-        mimetype: media.mimetype
-      };
-    } else if (typeMessage === "application") {
-      options = {
-        document: fs.readFileSync(pathMedia),
-        caption: bodyMessage,
-        fileName: media.originalname,
-        mimetype: media.mimetype
-      };
+      const isVoiceRecord = media.originalname.includes("audio-record-site");
+      finalPath = isVoiceRecord
+        ? await processAudio(media.path)
+        : await processAudioFile(media.path);
+      finalMime = "audio/mp4";
+      type = isVoiceRecord ? "ptt" : "audio";
+    } else if (typeMessage === "image") {
+      type = "image";
     } else {
-      options = {
-        image: fs.readFileSync(pathMedia),
-        caption: bodyMessage
-      };
+      type = "document";
+      docName = media.originalname;
     }
 
-    const jid = await resolveBestJidForTicket(ticket, wbot);
+    const fileBuffer = fs.readFileSync(finalPath);
+    const fileBase64 = `data:${finalMime};base64,${fileBuffer.toString("base64")}`;
 
-    const sentMessage = await wbot.sendMessage(
-      jid,
-      {
-        ...options
-      }
-    );
+    const response = await SendMedia(whatsapp, {
+      number,
+      type,
+      file: fileBase64,
+      text: bodyMessage,
+      mimetype: finalMime,
+      docName
+    });
 
-    await ticket.update({ lastMessage: bodyMessage });
+    if (bodyMessage) {
+      await ticket.update({ lastMessage: bodyMessage });
+    }
 
-    return sentMessage;
+    return response;
   } catch (err) {
     Sentry.captureException(err);
     console.log(err);

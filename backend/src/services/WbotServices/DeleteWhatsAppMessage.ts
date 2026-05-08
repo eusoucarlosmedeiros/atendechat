@@ -1,9 +1,8 @@
-import { proto, WASocket } from "baileys";
 import AppError from "../../errors/AppError";
-import GetTicketWbot from "../../helpers/GetTicketWbot";
-import GetWbotMessage from "../../helpers/GetWbotMessage";
 import Message from "../../models/Message";
 import Ticket from "../../models/Ticket";
+import ShowWhatsAppService from "../WhatsappService/ShowWhatsAppService";
+import DeleteMessage from "../UazapiServices/chat/DeleteMessage";
 
 const DeleteWhatsAppMessage = async (messageId: string): Promise<Message> => {
   const message = await Message.findByPk(messageId, {
@@ -21,29 +20,15 @@ const DeleteWhatsAppMessage = async (messageId: string): Promise<Message> => {
   }
 
   const { ticket } = message;
-
-  const messageToDelete = await GetWbotMessage(ticket, messageId);
+  const whatsapp = await ShowWhatsAppService(ticket.whatsappId, ticket.companyId);
 
   try {
-    const wbot = await GetTicketWbot(ticket);
-    const messageDelete = messageToDelete as proto.WebMessageInfo;
-
-    const menssageDelete = messageToDelete as Message;
-
-    await (wbot as WASocket).sendMessage(menssageDelete.remoteJid, {
-      delete: {
-        id: menssageDelete.id,
-        remoteJid: menssageDelete.remoteJid,
-        participant: menssageDelete.participant,
-        fromMe: menssageDelete.fromMe
-      }
-    });
-
+    await DeleteMessage(whatsapp, { id: message.id });
   } catch (err) {
     throw new AppError("ERR_DELETE_WAPP_MSG");
   }
-  await message.update({ isDeleted: true });
 
+  await message.update({ isDeleted: true });
   return message;
 };
 

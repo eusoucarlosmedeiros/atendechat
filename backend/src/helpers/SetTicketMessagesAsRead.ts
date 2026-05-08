@@ -1,62 +1,52 @@
-import { proto, WASocket } from "baileys";
-// import cacheLayer from "../libs/cache";
 import { getIO } from "../libs/socket";
 import Message from "../models/Message";
 import Ticket from "../models/Ticket";
+import ShowWhatsAppService from "../services/WhatsappService/ShowWhatsAppService";
+import ReadChat from "../services/UazapiServices/chat/ReadChat";
 import { logger } from "../utils/logger";
-import GetTicketWbot from "./GetTicketWbot";
 
+/**
+ * Marca todas as mensagens nao lidas do ticket como lidas (incluindo
+ * envio de "visto" ao remetente via uazapi).
+ *
+ * Substitui a chamada wbot.chatModify({ markRead, lastMessages }) da
+ * Baileys por POST /chat/read.
+ */
 const SetTicketMessagesAsRead = async (ticket: Ticket): Promise<void> => {
   await ticket.update({ unreadMessages: 0 });
-  // await cacheLayer.set(`contacts:${ticket.contactId}:unreads`, "0");
 
   try {
-    const wbot = await GetTicketWbot(ticket);
-
-    const getJsonMessage = await Message.findAll({
-      where: {
-        ticketId: ticket.id,
-        fromMe: false,
-        read: false
-      },
-      order: [["createdAt", "DESC"]]
+    const unreadCount = await Message.count({
+      where: { ticketId: ticket.id, fromMe: false, read: false }
     });
 
-    if (getJsonMessage.length > 0) {
-      const lastMessages: proto.IWebMessageInfo = JSON.parse(
-        JSON.stringify(getJsonMessage[0].dataJson)
+    if (unreadCount > 0) {
+      const whatsapp = await ShowWhatsAppService(
+        ticket.whatsappId,
+        ticket.companyId
       );
-
-      if (lastMessages.key && lastMessages.key.fromMe === false) {
-        await (wbot as WASocket).chatModify(
-          { markRead: true, lastMessages: [lastMessages] },
-          `${ticket.contact.number}@${
-            ticket.isGroup ? "g.us" : "s.whatsapp.net"
-          }`
-        );
-      }
+      const number = ticket.isGroup
+        ? `${ticket.contact.number}@g.us`
+        : ticket.contact.number;
+      await ReadChat(whatsapp, { number, readAll: true });
     }
 
     await Message.update(
       { read: true },
-      {
-        where: {
-          ticketId: ticket.id,
-          read: false
-        }
-      }
+      { where: { ticketId: ticket.id, read: false } }
     );
   } catch (err) {
     logger.warn(
-      `Could not mark messages as read. Maybe whatsapp session disconnected? Err: ${err}`
+      `SetTicketMessagesAsRead falhou (ticket=${ticket.id}). ` +
+      `Sessao desconectada ou uazapi off? Err: ${err}`
     );
   }
 
   const io = getIO();
-  io.to(`company-${ticket.companyId}-mainchannel`).emit(`company-${ticket.companyId}-ticket`, {
-    action: "updateUnread",
-    ticketId: ticket.id
-  });
+  io.to(`company-${ticket.companyId}-mainchannel`).emit(
+    `company-${ticket.companyId}-ticket`,
+    { action: "updateUnread", ticketId: ticket.id }
+  );
 };
 
 export default SetTicketMessagesAsRead;

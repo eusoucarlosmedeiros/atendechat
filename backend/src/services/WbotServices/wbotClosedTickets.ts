@@ -89,9 +89,9 @@ export const ClosedAllOpenTickets = async (companyId: number): Promise<void> => 
             closeTicket(showTicket, showTicket.status, bodyExpiresMessageInactive);
 
             if (expiresInactiveMessage !== "" && expiresInactiveMessage !== undefined) {
-              const sentMessage = await SendWhatsAppMessage({ body: bodyExpiresMessageInactive, ticket: showTicket });
-
-              await verifyMessage(sentMessage, showTicket, showTicket.contact);
+              // Persistencia da Message acontece pelo webhook 'messages' (from_me=true)
+              // que a uazapi vai entregar logo apos este envio.
+              await SendWhatsAppMessage({ body: bodyExpiresMessageInactive, ticket: showTicket });
             }
 
             await ticketTraking.update({

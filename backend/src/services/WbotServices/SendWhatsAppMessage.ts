@@ -1,12 +1,12 @@
-import { WAMessage } from "baileys";
 import * as Sentry from "@sentry/node";
 import AppError from "../../errors/AppError";
-import GetTicketWbot from "../../helpers/GetTicketWbot";
 import Message from "../../models/Message";
 import Ticket from "../../models/Ticket";
-
+import ShowWhatsAppService from "../WhatsappService/ShowWhatsAppService";
+import SendText, {
+  SendMessageResponse
+} from "../UazapiServices/send/SendText";
 import formatBody from "../../helpers/Mustache";
-import { resolveBestJidForTicket } from "../../helpers/LidPnResolver";
 
 interface Request {
   body: string;
@@ -14,52 +14,38 @@ interface Request {
   quotedMsg?: Message;
 }
 
+/**
+ * Envia mensagem de texto via uazapi.
+ *
+ * - Para 1:1: passa o `Contact.number` puro (E.164). uazapi resolve LID
+ *   internamente, eliminando todo o drama da Baileys com @lid.
+ * - Para grupo: passa `<groupId>@g.us`.
+ * - Quote/reply: usa o id da mensagem original em `replyid`.
+ *
+ * A persistencia da Message fica para quando o webhook 'messages' chegar
+ * com `from_me: true` — handleMessages faz o upsert. Devolvemos so o que
+ * a uazapi respondeu (id + status + timestamp) para o caller.
+ */
 const SendWhatsAppMessage = async ({
   body,
   ticket,
   quotedMsg
-}: Request): Promise<WAMessage> => {
-  let options = {};
-  const wbot = await GetTicketWbot(ticket);
+}: Request): Promise<SendMessageResponse> => {
+  const whatsapp = await ShowWhatsAppService(ticket.whatsappId, ticket.companyId);
 
-  // Resolve JID com a logica completa: Contact.number/lid + LidMappings +
-  // wbot.onWhatsApp() + parse historico de mensagens. Sempre prefere PN
-  // (@s.whatsapp.net) — enviar para @lid nao entrega.
-  const number = await resolveBestJidForTicket(ticket, wbot);
-
-  if (quotedMsg) {
-      const chatMessages = await Message.findOne({
-        where: {
-          id: quotedMsg.id
-        }
-      });
-
-      if (chatMessages) {
-        const msgFound = JSON.parse(chatMessages.dataJson);
-
-        options = {
-          quoted: {
-            key: msgFound.key,
-            message: {
-              extendedTextMessage: msgFound.message.extendedTextMessage
-            }
-          }
-        };
-      }
-    
-  }
+  const number = ticket.isGroup
+    ? `${ticket.contact.number}@g.us`
+    : ticket.contact.number;
 
   try {
-    const sentMessage = await wbot.sendMessage(number,{
-        text: formatBody(body, ticket.contact)
-      },
-      {
-        ...options
-      }
-    );
-
-    await ticket.update({ lastMessage: formatBody(body, ticket.contact) });
-    return sentMessage;
+    const formatted = formatBody(body, ticket.contact);
+    const response = await SendText(whatsapp, {
+      number,
+      text: formatted,
+      replyid: quotedMsg?.id
+    });
+    await ticket.update({ lastMessage: formatted });
+    return response;
   } catch (err) {
     Sentry.captureException(err);
     console.log(err);
