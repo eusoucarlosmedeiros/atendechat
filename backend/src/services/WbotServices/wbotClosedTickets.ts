@@ -6,7 +6,6 @@ import formatBody from "../../helpers/Mustache";
 import SendWhatsAppMessage from "./SendWhatsAppMessage";
 import moment from "moment";
 import ShowTicketService from "../TicketServices/ShowTicketService";
-import { verifyMessage } from "./wbotMessageListener";
 import TicketTraking from "../../models/TicketTraking";
 
 export const ClosedAllOpenTickets = async (companyId: number): Promise<void> => {

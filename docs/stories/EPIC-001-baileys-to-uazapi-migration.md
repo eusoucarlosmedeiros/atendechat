@@ -29,16 +29,16 @@ Substituir 100% da camada Baileys (SDK in-process) pelo **uazapi** (API HTTP ext
 | # | Story | Estimativa | Bloqueia | Status |
 |---|-------|-----------|----------|--------|
 | 01.01 | Schema + migrations | 0.5d | - | ✅ Done (Dara) |
-| 01.02 | Cliente uazapi + wrappers | 2d | 03,04,05,06 | 🟡 In Review (Dex) |
-| 01.03 | Webhook controller + handlers | 3d | 06d, 07 | 🟡 In Review (Dex) |
-| 01.04 | Send services via uazapi | 2d | 07 | ✅ GO (PO 9/10) |
-| 01.05 | Sessão / QR / Status | 2d | 07 | ✅ GO (PO 8/10) |
-| 01.06a | Campanhas + helpers/SendMessage | 1d | 07 | ✅ GO (fatiada de 01.06) |
-| 01.06b | Typebot | 0.5d | 07 | ✅ GO (fatiada de 01.06) |
-| 01.06c | CheckNumber + ProfilePic + ImportContacts | 0.5d | 07 | ✅ GO (fatiada de 01.06) |
-| 01.06d | Calls (delete wbotMonitor) | 0.5d | 07 | ✅ GO (depende de 01.03 Done) |
-| 01.07 | Cutover (remoção Baileys) | 1d | 08 | ✅ GO (PO 10/10) |
-| 01.08 | Drop tabelas legacy (sprint+1) | 0.5d | - | ✅ GO (PO 10/10) |
+| 01.02 | Cliente uazapi + wrappers | 2d | 03,04,05,06 | ✅ Done (Dex) |
+| 01.03 | Webhook controller + handlers | 3d | 06d, 07 | ✅ Done (Dex) |
+| 01.04 | Send services via uazapi | 2d | 07 | ✅ Done (Dex) |
+| 01.05 | Sessão / QR / Status | 2d | 07 | ✅ Done (Dex) |
+| 01.06a | Campanhas + helpers/SendMessage | 1d | 07 | ✅ Done (Dex) |
+| 01.06b | Typebot | 0.5d | 07 | ✅ Done (Dex) |
+| 01.06c | CheckNumber + ProfilePic + ImportContacts | 0.5d | 07 | ✅ Done (Dex) |
+| 01.06d | Calls (delete wbotMonitor) | 0.5d | 07 | ✅ Done (Dex) |
+| 01.07 | Cutover (remoção Baileys) | 1d | 08 | ✅ Done (Dex) |
+| 01.08 | Drop tabelas legacy (sprint+1) | 0.5d | - | Draft — pós-validação |
 | **Total** | | **~13d** | | 11 stories |
 
 ## Dependency graph (atualizado pós-PO review)

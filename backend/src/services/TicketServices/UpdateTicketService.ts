@@ -10,8 +10,7 @@ import ShowTicketService from "./ShowTicketService";
 import ShowWhatsAppService from "../WhatsappService/ShowWhatsAppService";
 import SendWhatsAppMessage from "../WbotServices/SendWhatsAppMessage";
 import FindOrCreateATicketTrakingService from "./FindOrCreateATicketTrakingService";
-import GetTicketWbot from "../../helpers/GetTicketWbot";
-import { verifyMessage } from "../WbotServices/wbotMessageListener";
+import SendText from "../UazapiServices/send/SendText";
 import ListSettingsServiceOne from "../SettingServices/ListSettingsServiceOne"; //NOVO PLW DESIGN//
 import ShowUserService from "../UserServices/ShowUserService"; //NOVO PLW DESIGN//
 import { isNil } from "lodash";
@@ -178,7 +177,7 @@ const UpdateTicketService = async ({
 
         const {language} = await Company.findByPk(companyId);
         const queue = await Queue.findByPk(queueId);
-        const wbot = await GetTicketWbot(ticket);
+        const whatsapp = await ShowWhatsAppService(ticket.whatsappId, companyId);
 
         const translatedMessage = {
           'pt': "*Mensagem automática*:\nVocê foi transferido para o departamento *" + queue?.name + "*\naguarde, já vamos te atender!",
@@ -186,20 +185,18 @@ const UpdateTicketService = async ({
           'es': "*Mensaje automático*:\nHas sido transferido al departamento *" + queue?.name + "*\npor favor espera, ¡te atenderemos pronto!"
         }
 
-        const queueChangedMessage = await wbot.sendMessage(
-          `${ticket.contact.number}@${ticket.isGroup ? "g.us" : "s.whatsapp.net"}`,
-          {
-            text: translatedMessage[language]
-          }
-        );
-        await verifyMessage(queueChangedMessage, ticket, ticket.contact);
+        await SendText(whatsapp, {
+          number: ticket.isGroup ? `${ticket.contact.number}@g.us` : ticket.contact.number,
+          text: translatedMessage[language]
+        });
+        // Persistencia via webhook (handleMessages, from_me=true)
       }
       else
         // Mensagem de transferencia do ATENDENTE
         if (oldUserId !== userId && oldQueueId === queueId && !isNil(oldUserId) && !isNil(userId)) {
 
           const {language} = await Company.findByPk(companyId);
-          const wbot = await GetTicketWbot(ticket);
+          const whatsapp = await ShowWhatsAppService(ticket.whatsappId, companyId);
           const nome = await ShowUserService(ticketData.userId);
 
           const translatedMessage = {
@@ -208,20 +205,17 @@ const UpdateTicketService = async ({
               'es': "*Mensaje automático*:\nHas sido transferido al agente *" + nome.name + "*\npor favor espera, ¡te atenderemos pronto!"
           }
 
-          const queueChangedMessage = await wbot.sendMessage(
-            `${ticket.contact.number}@${ticket.isGroup ? "g.us" : "s.whatsapp.net"}`,
-            {
-              text: translatedMessage[language]
-            }
-          );
-          await verifyMessage(queueChangedMessage, ticket, ticket.contact);
+          await SendText(whatsapp, {
+            number: ticket.isGroup ? `${ticket.contact.number}@g.us` : ticket.contact.number,
+            text: translatedMessage[language]
+          });
         }
         else
           // Mensagem de transferencia do ATENDENTE e da FILA
           if (oldUserId !== userId && !isNil(oldUserId) && !isNil(userId) && oldQueueId !== queueId && !isNil(oldQueueId) && !isNil(queueId)) {
 
             const {language} = await Company.findByPk(companyId);
-            const wbot = await GetTicketWbot(ticket);
+            const whatsapp = await ShowWhatsAppService(ticket.whatsappId, companyId);
             const queue = await Queue.findByPk(queueId);
             const nome = await ShowUserService(ticketData.userId);
 
@@ -231,19 +225,16 @@ const UpdateTicketService = async ({
               'es': "*Mensaje automático*:\nHas sido transferido al departamento *" + queue?.name + "* y serás atendido por *" + nome.name + "*\npor favor espera, ¡te atenderemos pronto!"
             }
 
-            const queueChangedMessage = await wbot.sendMessage(
-              `${ticket.contact.number}@${ticket.isGroup ? "g.us" : "s.whatsapp.net"}`,
-              {
-                text: translatedMessage[language]
-              }
-            );
-            await verifyMessage(queueChangedMessage, ticket, ticket.contact);
+            await SendText(whatsapp, {
+              number: ticket.isGroup ? `${ticket.contact.number}@g.us` : ticket.contact.number,
+              text: translatedMessage[language]
+            });
           } else
             if (oldUserId !== undefined && isNil(userId) && oldQueueId !== queueId && !isNil(queueId)) {
 
               const {language} = await Company.findByPk(companyId);
               const queue = await Queue.findByPk(queueId);
-              const wbot = await GetTicketWbot(ticket);
+              const whatsapp = await ShowWhatsAppService(ticket.whatsappId, companyId);
 
               const translatedMessage = {
                 'pt': "*Mensagem automática*:\nVocê foi transferido para o departamento *" + queue?.name + "*\naguarde, já vamos te atender!",
@@ -251,13 +242,10 @@ const UpdateTicketService = async ({
                 'es': "*Mensaje automático*:\nHas sido transferido al departamento *" + queue?.name + "*\npor favor espera, ¡te atenderemos pronto!"
               }
 
-              const queueChangedMessage = await wbot.sendMessage(
-                `${ticket.contact.number}@${ticket.isGroup ? "g.us" : "s.whatsapp.net"}`,
-                {
-                  text: translatedMessage[language]
-                }
-              );
-              await verifyMessage(queueChangedMessage, ticket, ticket.contact);
+              await SendText(whatsapp, {
+                number: ticket.isGroup ? `${ticket.contact.number}@g.us` : ticket.contact.number,
+                text: translatedMessage[language]
+              });
             }
     }
 

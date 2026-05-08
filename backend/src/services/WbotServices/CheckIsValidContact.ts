@@ -1,6 +1,6 @@
 import AppError from "../../errors/AppError";
 import GetDefaultWhatsApp from "../../helpers/GetDefaultWhatsApp";
-import { getWbot } from "../../libs/wbot";
+import CheckNumberUazapi from "../UazapiServices/chat/CheckNumber";
 
 const CheckIsValidContact = async (
   number: string,
@@ -8,11 +8,9 @@ const CheckIsValidContact = async (
 ): Promise<void> => {
   const defaultWhatsapp = await GetDefaultWhatsApp(companyId);
 
-  const wbot = getWbot(defaultWhatsapp.id);
-
   try {
-    const isValidNumber = await wbot.onWhatsApp(`${number}`);
-    if (!isValidNumber) {
+    const result = await CheckNumberUazapi(defaultWhatsapp, { number });
+    if (!result?.exists) {
       throw new AppError("invalidNumber");
     }
   } catch (err: any) {

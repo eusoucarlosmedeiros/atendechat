@@ -1,6 +1,5 @@
 import { Request, Response } from "express";
 import { getIO } from "../libs/socket";
-import { removeWbot } from "../libs/wbot";
 import { StartWhatsAppSession } from "../services/WbotServices/StartWhatsAppSession";
 
 import CreateWhatsAppService from "../services/WhatsappService/CreateWhatsAppService";
@@ -154,7 +153,8 @@ export const remove = async (
   await ShowWhatsAppService(whatsappId, companyId);
 
   await DeleteWhatsAppService(whatsappId);
-  removeWbot(+whatsappId);
+  // Limpeza da instancia uazapi e responsabilidade do DeleteWhatsAppService
+  // (que pode chamar DisconnectInstance) — removido removeWbot Baileys.
 
   const io = getIO();
   io.to(`company-${companyId}-mainchannel`).emit(`company-${companyId}-whatsapp`, {

@@ -15,6 +15,8 @@ import Company from "../../models/Company";
 import CreateMessageService from "../MessageServices/CreateMessageService";
 import CreateOrUpdateContactService from "../ContactServices/CreateOrUpdateContactService";
 import FindOrCreateTicketService from "../TicketServices/FindOrCreateTicketService";
+import ShowQueueIntegrationService from "../QueueIntegrationServices/ShowQueueIntegrationService";
+import typebotListener from "../TypebotServices/typebotListener";
 import { logger } from "../../utils/logger";
 import formatBody from "../../helpers/Mustache";
 
@@ -365,6 +367,29 @@ const processSingleMessage = async (
     messageData: messageData as any,
     companyId: whatsapp.companyId
   });
+
+  // Integracao Typebot — somente para mensagens recebidas (nao fromMe) em
+  // tickets que tem useIntegration ativa.
+  if (!fromMe && ticket.useIntegration && ticket.integrationId) {
+    try {
+      const integration = await ShowQueueIntegrationService(
+        ticket.integrationId,
+        whatsapp.companyId
+      );
+      if (integration && integration.type === "typebot") {
+        await typebotListener({
+          whatsapp,
+          remoteJid: resolveChatJid(msg),
+          body,
+          pushName: msg.pushName,
+          ticket,
+          typebot: integration
+        });
+      }
+    } catch (err) {
+      logger.warn(`[uazapi] typebot listener falhou ticket=${ticket.id}: ${err}`);
+    }
+  }
 };
 
 export default handleMessages;
