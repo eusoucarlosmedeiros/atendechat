@@ -27,16 +27,19 @@ import Message from "../models/Message";
 import LidMapping from "../models/LidMapping";
 import { Op } from "sequelize";
 
-// Heuristica conservadora: LIDs costumam ter 14+ digitos. Telefones
-// internacionais validos tem entre 8 e 15 digitos, mas em geral 10-13.
-// Marcamos como "suspeito de ser LID" se tem 14+ digitos OU se nao bate
-// com nenhum prefixo de pais conhecido. Para minimizar falsos positivos,
-// usamos so o criterio "14+ digitos" — telefones validos sao raros
-// nessa faixa em produtos brasileiros.
-const looksLikeLid = (number: string): boolean => {
+// Heuristica:
+//  - Contato cujo number === lid (signal claro: salvamos o LID como number)
+//  - 14+ digitos no number (LIDs geralmente tem 13-15, telefones brasileiros 11-13)
+//  - 13 digitos sem prefixo "55" (codigo Brasil) — fortemente suspeito
+const looksLikeLid = (number: string, lid?: string): boolean => {
   if (!number) return false;
   const digits = number.replace(/\D/g, "");
-  return /^\d{14,}$/.test(digits);
+  if (lid && digits === lid.replace(/\D/g, "")) return true;
+  if (/^\d{14,}$/.test(digits)) return true;
+  // 13 digitos que nao comeca com 55 (codigo Brasil) e provavelmente LID
+  // em uma instancia BR. Para outros paises, ajustar — heuristica conservadora.
+  if (/^\d{13}$/.test(digits) && !digits.startsWith("55")) return true;
+  return false;
 };
 
 const tryResolveFromMappings = async (
@@ -100,7 +103,7 @@ const main = async () => {
   const allContacts = await Contact.findAll({ where: { isGroup: false } });
   const candidates = new Map<number, Contact>();
   for (const c of [...suspects, ...allContacts]) {
-    if (looksLikeLid(c.number) || c.lid) {
+    if (looksLikeLid(c.number, c.lid) || c.lid) {
       candidates.set(c.id, c);
     }
   }
@@ -113,7 +116,7 @@ const main = async () => {
 
   for (const c of candidates.values()) {
     // Determina qual e o LID atual: ou ja esta em c.lid, ou esta em c.number.
-    const currentLid = c.lid || (looksLikeLid(c.number) ? c.number : undefined);
+    const currentLid = c.lid || (looksLikeLid(c.number, c.lid) ? c.number : undefined);
     if (!currentLid) {
       kept++;
       continue;
@@ -127,7 +130,7 @@ const main = async () => {
     if (pn) {
       // achou telefone real: arruma o contato.
       const updates: Partial<Contact> = { lid: currentLid };
-      if (looksLikeLid(c.number) || c.number !== pn) {
+      if (looksLikeLid(c.number, c.lid) || c.number !== pn) {
         updates.number = pn;
       }
       await c.update(updates);

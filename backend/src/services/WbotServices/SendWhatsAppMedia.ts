@@ -9,7 +9,7 @@ import GetTicketWbot from "../../helpers/GetTicketWbot";
 import Ticket from "../../models/Ticket";
 import { lookup } from "mime-types";
 import formatBody from "../../helpers/Mustache";
-import { buildJidForSending, getLidForPn } from "../../helpers/LidPnResolver";
+import { resolveBestJidForTicket } from "../../helpers/LidPnResolver";
 
 interface Request {
   media: Express.Multer.File;
@@ -172,15 +172,7 @@ const SendWhatsAppMedia = async ({
       };
     }
 
-    let lid = ticket.contact?.lid as string | undefined;
-    if (!lid && !ticket.isGroup && ticket.contact?.number && ticket.whatsappId) {
-      lid = await getLidForPn(ticket.contact.number, ticket.whatsappId);
-    }
-    const jid = buildJidForSending({
-      lid,
-      pn: ticket.contact.number,
-      isGroup: ticket.isGroup
-    });
+    const jid = await resolveBestJidForTicket(ticket, wbot);
 
     const sentMessage = await wbot.sendMessage(
       jid,

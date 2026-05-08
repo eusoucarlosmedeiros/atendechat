@@ -6,7 +6,7 @@ import Message from "../../models/Message";
 import Ticket from "../../models/Ticket";
 
 import formatBody from "../../helpers/Mustache";
-import { buildJidForSending, getLidForPn } from "../../helpers/LidPnResolver";
+import { resolveBestJidForTicket } from "../../helpers/LidPnResolver";
 
 interface Request {
   body: string;
@@ -22,21 +22,10 @@ const SendWhatsAppMessage = async ({
   let options = {};
   const wbot = await GetTicketWbot(ticket);
 
-  // Resolve o melhor JID para enviar:
-  //   - Grupo: <id>@g.us (mantido como antes)
-  //   - DM: prefere @lid (se temos um LID conhecido para esse contato),
-  //         senao cai pro telefone @s.whatsapp.net.
-  // Se o contato nao tem LID salvo, ainda consultamos o cache LidMappings
-  // (caso outro ticket do mesmo numero ja tenha visto o LID).
-  let lid = ticket.contact?.lid as string | undefined;
-  if (!lid && !ticket.isGroup && ticket.contact?.number && ticket.whatsappId) {
-    lid = await getLidForPn(ticket.contact.number, ticket.whatsappId);
-  }
-  const number = buildJidForSending({
-    lid,
-    pn: ticket.contact.number,
-    isGroup: ticket.isGroup
-  });
+  // Resolve JID com a logica completa: Contact.number/lid + LidMappings +
+  // wbot.onWhatsApp() + parse historico de mensagens. Sempre prefere PN
+  // (@s.whatsapp.net) — enviar para @lid nao entrega.
+  const number = await resolveBestJidForTicket(ticket, wbot);
 
   if (quotedMsg) {
       const chatMessages = await Message.findOne({
