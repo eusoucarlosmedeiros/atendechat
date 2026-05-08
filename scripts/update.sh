@@ -123,20 +123,33 @@ cp package.json "package.json.bkp.$TS"
 [ -d dist ] && cp -r dist "dist.bkp.$TS"
 echo "BACKUP_TS=$TS"
 
-# 2) GIT PULL
-echo "==> git pull (em $REPO_DIR)"
+# 2) GIT SYNC (forca igualar a main; ignora alteracoes locais — package-lock,
+#    node_modules etc nao sao rastreados, entao nada importante e perdido)
+echo "==> git sync (forca alinhar com origin/main)"
 cd "$REPO_DIR"
+SHA_BEFORE=$(git rev-parse HEAD 2>/dev/null || echo "")
 git fetch --all --prune
-git pull --rebase
+git reset --hard origin/main
+SHA_AFTER=$(git rev-parse HEAD)
+echo "SHA: $SHA_BEFORE -> $SHA_AFTER"
 
-# 3) INSTALL
+# Detecta se houve mudanca no frontend para rebuildar tambem.
+FRONTEND_CHANGED="no"
+if [ -n "$SHA_BEFORE" ] && [ "$SHA_BEFORE" != "$SHA_AFTER" ]; then
+  if git diff --name-only "$SHA_BEFORE..$SHA_AFTER" | grep -q "^frontend/"; then
+    FRONTEND_CHANGED="yes"
+  fi
+fi
+echo "Frontend changed: $FRONTEND_CHANGED"
+
+# 3) INSTALL BACKEND
 echo "==> Backend: dependencias"
 cd "$BACKEND_DIR"
 # Remove pacote antigo (se ainda estiver no node_modules) — ignora erro se nao existir
 npm uninstall @whiskeysockets/baileys --no-audit --no-fund 2>/dev/null || true
 npm install --legacy-peer-deps --no-audit --no-fund
 
-# 4) BUILD
+# 4) BUILD BACKEND
 echo "==> Backend: build"
 rm -rf dist
 npm run build
@@ -152,13 +165,35 @@ fi
 echo "==> Backend: db:migrate"
 npx sequelize db:migrate || echo "(migrate sem mudancas ou ja aplicadas)"
 
-# 6) RESTART
+# 6) RESTART BACKEND
 echo "==> Restart PM2: $PM2_BACKEND"
 pm2 restart "$PM2_BACKEND"
 sleep 3
 pm2 save || true
 
-# 7) LOGS
+# 7) FRONTEND (rebuild + restart somente se houve mudanca em frontend/)
+FRONTEND_DIR="$REPO_DIR/frontend"
+if [ "$FRONTEND_CHANGED" = "yes" ] && [ -d "$FRONTEND_DIR" ]; then
+  echo "==> Frontend: dependencias"
+  cd "$FRONTEND_DIR"
+  npm install --legacy-peer-deps --no-audit --no-fund
+
+  echo "==> Frontend: build"
+  rm -rf build
+  npm run build
+
+  if [ ! -d build/static ]; then
+    echo "AVISO: build do frontend pode nao ter gerado bundle (sem build/static/)"
+  fi
+
+  echo "==> Restart PM2: $INST-frontend"
+  pm2 restart "$INST-frontend" || pm2 restart atendechat-frontend || true
+  pm2 save || true
+else
+  echo "==> Frontend: sem mudancas, skip rebuild"
+fi
+
+# 8) LOGS
 echo ""
 echo "==> Logs (ultimas 60 linhas):"
 pm2 logs "$PM2_BACKEND" --lines 60 --nostream
