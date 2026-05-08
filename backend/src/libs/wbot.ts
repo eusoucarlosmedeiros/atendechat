@@ -6,14 +6,15 @@ import makeWASocket, {
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
   isJidBroadcast,
+  proto,
+  GroupMetadata,
   CacheStore
-} from "@whiskeysockets/baileys";
-import makeWALegacySocket from "@whiskeysockets/baileys";
+} from "baileys";
 import P from "pino";
 
 import Whatsapp from "../models/Whatsapp";
+import Message from "../models/Message";
 import { logger } from "../utils/logger";
-import MAIN_LOGGER from "@whiskeysockets/baileys/lib/Utils/logger";
 import authState from "../helpers/authState";
 import { Boom } from "@hapi/boom";
 import AppError from "../errors/AppError";
@@ -21,10 +22,9 @@ import { getIO } from "./socket";
 import { Store } from "./store";
 import { StartWhatsAppSession } from "../services/WbotServices/StartWhatsAppSession";
 import DeleteBaileysService from "../services/BaileysServices/DeleteBaileysService";
-import NodeCache from 'node-cache';
+import NodeCache from "node-cache";
 
-const loggerBaileys = MAIN_LOGGER.child({});
-loggerBaileys.level = "error";
+const loggerBaileys = P({ level: "error" });
 
 type Session = WASocket & {
   id?: number;
@@ -100,13 +100,11 @@ export const initWASocket = async (whatsapp: Whatsapp): Promise<Session> => {
           return;
         }
 
-        const { id, name, provider } = whatsappUpdate;
+        const { id, name } = whatsappUpdate;
 
         const { version, isLatest } = await fetchLatestBaileysVersion();
-        const isLegacy = provider === "stable" ? true : false;
 
         logger.info(`using WA v${version.join(".")}, isLatest: ${isLatest}`);
-        logger.info(`isLegacy: ${isLegacy}`);
         logger.info(`Starting session ${name}`);
         let retriesQrCode = 0;
 
@@ -116,59 +114,57 @@ export const initWASocket = async (whatsapp: Whatsapp): Promise<Session> => {
 
         const msgRetryCounterCache = new NodeCache();
         const userDevicesCache: CacheStore = new NodeCache();
+        // Cache de metadados de grupos: a Baileys consulta isso em cada envio
+        // para grupo. Sem esse cache, envios para grupos sao mais lentos e
+        // podem gerar timeouts.
+        const groupMetadataCache = new NodeCache({
+          stdTTL: 5 * 60,
+          useClones: false
+        });
 
         wsocket = makeWASocket({
           logger: loggerBaileys,
           printQRInTerminal: false,
-          browser: Browsers.macOS("Desktop"),
+          browser: Browsers.appropriate("Desktop"),
           auth: {
             creds: state.creds,
-            keys: makeCacheableSignalKeyStore(state.keys, logger),
+            keys: makeCacheableSignalKeyStore(state.keys, loggerBaileys)
           },
           version,
-          defaultQueryTimeoutMs: undefined,
+          defaultQueryTimeoutMs: 60_000,
           connectTimeoutMs: 60_000,
           keepAliveIntervalMs: 30_000,
-          retryRequestDelayMs: 250,
+          retryRequestDelayMs: 1000,
+          maxMsgRetryCount: 5,
+          markOnlineOnConnect: true,
           syncFullHistory: false,
+          generateHighQualityLinkPreview: false,
           msgRetryCounterCache,
+          userDevicesCache,
           shouldIgnoreJid: jid => isJidBroadcast(jid),
-          getMessage: async () => {
-            return { conversation: "" };
+          // Resolve metadata de grupo a partir do cache antes de cair na
+          // request via socket. Reduz latencia e evita "Timed Out".
+          cachedGroupMetadata: async (jid: string): Promise<GroupMetadata | undefined> => {
+            return groupMetadataCache.get<GroupMetadata>(jid);
           },
+          // CRITICO: WhatsApp requisita re-envio (retry) de mensagens que
+          // nao foram entregues ao destinatario. Se getMessage retornar
+          // vazio, o retry quebra e o envio falha silenciosamente — esse
+          // era o bug "so recebe nao envia". Buscamos a mensagem real no
+          // banco para que o retry funcione.
+          getMessage: async (key): Promise<proto.IMessage | undefined> => {
+            try {
+              if (!key?.id) return undefined;
+              const msg = await Message.findByPk(key.id);
+              if (!msg?.dataJson) return undefined;
+              const parsed = JSON.parse(msg.dataJson);
+              return parsed?.message || undefined;
+            } catch (err) {
+              logger.warn(`getMessage retry falhou para ${key?.id}: ${err}`);
+              return undefined;
+            }
+          }
         });
-
-        // wsocket = makeWASocket({
-        //   version,
-        //   logger: loggerBaileys,
-        //   printQRInTerminal: false,
-        //   auth: state as AuthenticationState,
-        //   generateHighQualityLinkPreview: false,
-        //   shouldIgnoreJid: jid => isJidBroadcast(jid),
-        //   browser: ["Chat", "Chrome", "10.15.7"],
-        //   patchMessageBeforeSending: (message) => {
-        //     const requiresPatch = !!(
-        //       message.buttonsMessage ||
-        //       // || message.templateMessage
-        //       message.listMessage
-        //     );
-        //     if (requiresPatch) {
-        //       message = {
-        //         viewOnceMessage: {
-        //           message: {
-        //             messageContextInfo: {
-        //               deviceListMetadataVersion: 2,
-        //               deviceListMetadata: {},
-        //             },
-        //             ...message,
-        //           },
-        //         },
-        //       };
-        //     }
-
-        //     return message;
-        //   },
-        // })
 
         wsocket.ev.on(
           "connection.update",
@@ -276,6 +272,23 @@ export const initWASocket = async (whatsapp: Whatsapp): Promise<Session> => {
           }
         );
         wsocket.ev.on("creds.update", saveState);
+
+        // Mantem cache de metadados de grupos sempre atualizado.
+        wsocket.ev.on("groups.update", async updates => {
+          for (const update of updates) {
+            try {
+              if (!update.id) continue;
+              const meta = await wsocket.groupMetadata(update.id);
+              if (meta) groupMetadataCache.set(update.id, meta);
+            } catch (e) { /* noop */ }
+          }
+        });
+        wsocket.ev.on("group-participants.update", async ({ id }) => {
+          try {
+            const meta = await wsocket.groupMetadata(id);
+            if (meta) groupMetadataCache.set(id, meta);
+          } catch (e) { /* noop */ }
+        });
       })();
     } catch (error) {
       initInProgress.delete(whatsapp.id);
