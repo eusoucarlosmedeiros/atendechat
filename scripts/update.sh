@@ -141,8 +141,10 @@ echo "==> Backend: build"
 rm -rf dist
 npm run build
 
-if [ ! -f dist/libs/wbot.js ] || [ ! -f dist/helpers/authState.js ]; then
+if [ ! -f dist/server.js ] || [ ! -f dist/libs/uazapi.js ]; then
   echo "ERRO: build nao gerou arquivos esperados em dist/"
+  echo "Verificando dist/:"
+  ls dist/ 2>&1 | head -20
   exit 7
 fi
 
