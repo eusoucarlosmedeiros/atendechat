@@ -8,7 +8,10 @@ import { logger } from "../../utils/logger";
 import InitInstance from "../UazapiServices/instance/InitInstance";
 import ConnectInstance from "../UazapiServices/instance/ConnectInstance";
 import DisconnectInstance from "../UazapiServices/instance/DisconnectInstance";
+import GetInstanceStatus from "../UazapiServices/instance/GetInstanceStatus";
 import ConfigureWebhook from "../UazapiServices/instance/ConfigureWebhook";
+
+const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
 /**
  * StartWhatsAppSession (uazapi) — substitui o initWASocket da Baileys.
@@ -16,15 +19,14 @@ import ConfigureWebhook from "../UazapiServices/instance/ConfigureWebhook";
  * Etapas:
  *   1. Garante que a instancia exista na uazapi (POST /instance/init via
  *      admintoken). Persiste id+token em Whatsapp.uazapi*.
- *   2. Configura webhook (POST /webhook) apontando para nosso backend
- *      em https://<UAZAPI_WEBHOOK_BASE_URL>/uazapi/webhook/<secret>.
- *   3. Conecta (POST /instance/connect) — retorna QR base64 OU pair code.
- *   4. Atualiza Whatsapps.status + qrcode + emite socket.io.
+ *   2. Configura webhook (POST /webhook).
+ *   3. Conecta (POST /instance/connect). O QR pode estar na resposta
+ *      (instance.qrcode) OU vir depois — neste caso, fazemos polling de
+ *      /instance/status por ate 30s para capturar o QR atualizado.
+ *   4. Atualiza Whatsapps + emite socket.io.
  *
- * Em caso de falha apos init bem-sucedido, faz rollback: chama
- * DisconnectInstance e zera os campos uazapi para evitar estado
- * inconsistente (instancia criada mas webhook ausente -> mensagens
- * chegariam sem nosso backend escutar).
+ * Em caso de falha apos init, faz rollback (DisconnectInstance) para
+ * evitar estado inconsistente.
  */
 export const StartWhatsAppSession = async (
   whatsapp: Whatsapp,
@@ -42,16 +44,21 @@ export const StartWhatsAppSession = async (
   emitUpdate();
 
   try {
-    // 1. Garantir instancia
+    // 1. Garantir instancia uazapi
     if (!whatsapp.uazapiInstanceId || !whatsapp.uazapiToken) {
+      logger.info(`[uazapi] criando instancia para wid=${whatsapp.id} (${whatsapp.name})`);
       const init = await InitInstance({ name: whatsapp.name });
+      // Atencao: spec uazapi diz que `id` esta em `instance.id` e `token`
+      // tanto em top-level quanto em instance.token. Usamos os top-level
+      // mais o instance.id.
       await whatsapp.update({
-        uazapiInstanceId: init.id,
-        uazapiToken: init.token,
+        uazapiInstanceId: init.instance?.id || (init as any).id,
+        uazapiToken: init.token || init.instance?.token,
         uazapiBaseUrl: process.env.UAZAPI_BASE_URL || null,
         uazapiWebhookSecret: crypto.randomBytes(16).toString("hex")
       });
       await whatsapp.reload();
+      logger.info(`[uazapi] instancia criada wid=${whatsapp.id} uazapiInstanceId=${whatsapp.uazapiInstanceId}`);
     }
 
     if (!whatsapp.uazapiWebhookSecret) {
@@ -61,13 +68,13 @@ export const StartWhatsAppSession = async (
       await whatsapp.reload();
     }
 
-    // 2. Configurar webhook (idempotente)
-    // BACKEND_URL ja existe no .env do projeto — reusamos como base.
+    // 2. Configurar webhook
     const webhookBase = process.env.BACKEND_URL;
     if (!webhookBase) {
       throw new Error("BACKEND_URL nao configurado em .env");
     }
     const webhookUrl = `${webhookBase.replace(/\/$/, "")}/uazapi/webhook/${whatsapp.uazapiWebhookSecret}`;
+    logger.info(`[uazapi] configurando webhook wid=${whatsapp.id} url=${webhookUrl}`);
     await ConfigureWebhook(whatsapp, {
       url: webhookUrl,
       events: [
@@ -78,48 +85,72 @@ export const StartWhatsAppSession = async (
         "contacts",
         "presence"
       ],
-      excludeMessages: ["wasSentByApi"], // critico — evita loop
+      excludeMessages: ["wasSentByApi"],
       enabled: true
     });
 
-    // 3. Conectar — retorna QR ou ja conecta direto se sessao for valida
+    // 3. Conectar
+    logger.info(`[uazapi] /instance/connect wid=${whatsapp.id}`);
     const connectRes = await ConnectInstance(whatsapp);
+    let qrcode = connectRes.instance?.qrcode;
+    let upstreamStatus = connectRes.instance?.status || "connecting";
+    const isConnected = connectRes.connected || upstreamStatus === "connected";
 
-    if (connectRes.connected) {
+    // 4. Polling de fallback: se /connect retornou sem QR e nao esta
+    // conectado, faz polling de /instance/status ate 30s para pegar o QR.
+    if (!isConnected && !qrcode) {
+      logger.info(`[uazapi] aguardando QR via polling /instance/status wid=${whatsapp.id}`);
+      for (let i = 0; i < 15; i++) {
+        await sleep(2000);
+        try {
+          const statusRes = await GetInstanceStatus(whatsapp);
+          qrcode = statusRes.instance?.qrcode;
+          upstreamStatus = statusRes.instance?.status || upstreamStatus;
+          if (qrcode || statusRes.status?.connected) {
+            logger.info(`[uazapi] QR/connected obtido apos ${(i + 1) * 2}s wid=${whatsapp.id}`);
+            break;
+          }
+        } catch (err) {
+          logger.warn(`[uazapi] polling status falhou (tentativa ${i + 1}): ${err}`);
+        }
+      }
+    }
+
+    // 5. Persistir e propagar
+    if (isConnected || upstreamStatus === "connected") {
       await whatsapp.update({
         status: "CONNECTED",
         qrcode: "",
         retries: 0
       });
-    } else if (connectRes.qrcode) {
+    } else if (qrcode) {
       await whatsapp.update({
         status: "qrcode",
-        qrcode: connectRes.qrcode
+        qrcode
       });
     } else {
-      // estado intermediario (connecting): handleConnection vai reconciliar
-      // quando o evento de connection chegar via webhook.
       await whatsapp.update({ status: "OPENING" });
+      logger.warn(
+        `[uazapi] sem QR nem connected apos polling — handleConnection ` +
+        `via webhook deve reconciliar wid=${whatsapp.id}`
+      );
     }
 
     await whatsapp.reload();
     emitUpdate();
 
     logger.info(
-      `[uazapi] StartWhatsAppSession ok wid=${whatsapp.id} status=${whatsapp.status}`
+      `[uazapi] StartWhatsAppSession ok wid=${whatsapp.id} status=${whatsapp.status} hasQr=${!!whatsapp.qrcode}`
     );
   } catch (err) {
     Sentry.captureException(err);
     logger.error(`[uazapi] StartWhatsAppSession falhou wid=${whatsapp.id}: ${err}`);
 
-    // Rollback: se ja temos instancia inicializada mas falhou em webhook ou
-    // connect, melhor desligar a instancia e zerar para tentar de novo
-    // do zero na proxima.
     try {
       if (whatsapp.uazapiInstanceId && whatsapp.uazapiToken) {
         try { await DisconnectInstance(whatsapp); } catch (_) { /* noop */ }
       }
-    } catch (_) { /* swallow rollback errors */ }
+    } catch (_) { /* swallow */ }
 
     await whatsapp.update({
       status: "DISCONNECTED",

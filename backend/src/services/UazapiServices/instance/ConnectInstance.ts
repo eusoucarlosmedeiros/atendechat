@@ -1,5 +1,6 @@
 import Whatsapp from "../../../models/Whatsapp";
 import { getUazapiClient } from "../../../libs/uazapi";
+import { UazapiInstance } from "./InitInstance";
 
 export interface ConnectInstanceParams {
   /**
@@ -10,18 +11,24 @@ export interface ConnectInstanceParams {
   phone?: string;
 }
 
+/**
+ * Resposta REAL do POST /instance/connect (uazapi spec).
+ * O QR/paircode estao DENTRO de `instance`, NAO no top-level.
+ */
 export interface ConnectInstanceResponse {
-  qrcode?: string;   // base64 do QR code (data URL ou string base64)
-  pairCode?: string; // codigo de pareamento (8 digitos)
-  connected?: boolean;
-  status?: string;
-  instance?: any;
+  connected: boolean;
+  loggedIn: boolean;
+  jid: any | null;
+  instance: UazapiInstance;  // <- aqui mora qrcode, paircode, status
 }
 
 /**
- * POST /instance/connect — inicia o handshake com o WhatsApp para a
- * instancia em questao. Retorna QR code OU pair code dependendo dos
- * params. Quando a sessao ja esta conectada, retorna `connected: true`.
+ * POST /instance/connect — inicia conexao com o WhatsApp.
+ *
+ * Importante: o QR pode NAO vir imediatamente. Quando vier, esta em
+ * `response.instance.qrcode` (formato `data:image/png;base64,...`).
+ * Caso `instance.status === "connecting"` e qrcode vazio, chame
+ * GetInstanceStatus em polling para obter o QR atualizado.
  */
 const ConnectInstance = async (
   whatsapp: Whatsapp,

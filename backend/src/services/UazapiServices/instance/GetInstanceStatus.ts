@@ -1,21 +1,29 @@
 import Whatsapp from "../../../models/Whatsapp";
 import { getUazapiClient } from "../../../libs/uazapi";
+import { UazapiInstance } from "./InitInstance";
 
+/**
+ * Resposta REAL do GET /instance/status (uazapi spec).
+ *   - `instance.qrcode`: QR atualizado (quando em connecting)
+ *   - `instance.paircode`: pair-code (quando aplicavel)
+ *   - `instance.status`: disconnected | connecting | connected
+ *   - `status.connected`: bool de conexao com WhatsApp
+ *   - `status.loggedIn`: bool de auth
+ */
 export interface InstanceStatusResponse {
-  status: string;             // disconnected | connecting | connected | qrcode
-  qrcode?: string;
-  profileName?: string;
-  profilePicUrl?: string;
-  isBusiness?: boolean;
-  platform?: string;
-  owner?: string;
-  battery?: number;
-  plugged?: boolean;
+  instance: UazapiInstance;
+  status: {
+    connected: boolean;
+    loggedIn: boolean;
+    jid: any | null;
+  };
 }
 
 /**
- * GET /instance/status — consulta status da instancia + QR atualizado se
- * estiver no estado "qrcode". Util para polling apos /instance/connect.
+ * GET /instance/status — info atualizada da instancia.
+ *
+ * Use em polling apos /instance/connect para obter o QR quando ele
+ * nao vier imediatamente na resposta do connect.
  */
 const GetInstanceStatus = async (
   whatsapp: Whatsapp
