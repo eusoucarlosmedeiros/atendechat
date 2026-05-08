@@ -29,7 +29,7 @@ Substituir 100% da camada Baileys (SDK in-process) pelo **uazapi** (API HTTP ext
 | # | Story | Estimativa | Bloqueia | Status |
 |---|-------|-----------|----------|--------|
 | 01.01 | Schema + migrations | 0.5d | - | ✅ Done (Dara) |
-| 01.02 | Cliente uazapi + wrappers | 2d | 03,04,05,06 | ✅ GO (PO 8/10) |
+| 01.02 | Cliente uazapi + wrappers | 2d | 03,04,05,06 | 🟡 In Review (Dex) |
 | 01.03 | Webhook controller + handlers | 3d | 06d, 07 | ✅ GO (PO 7/10) — escopo grande, pode fatiar 03a/03b |
 | 01.04 | Send services via uazapi | 2d | 07 | ✅ GO (PO 9/10) |
 | 01.05 | Sessão / QR / Status | 2d | 07 | ✅ GO (PO 8/10) |
