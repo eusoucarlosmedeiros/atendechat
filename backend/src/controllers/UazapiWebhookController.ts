@@ -32,17 +32,64 @@ const handle = async (req: Request, res: Response): Promise<Response> => {
   }
 
   const body = req.body || {};
-  // A uazapi pode enviar id em campos diferentes dependendo do evento.
-  const uazapiEventId =
-    body.id || body.event_id || body.eventId || body.message_id || body.messageId;
-  const eventType =
-    body.event || body.eventType || body.type || "unknown";
+
+  // A uazapi pode envelopar o payload de varias formas. Tentamos achar
+  // tanto o id da mensagem/evento quanto o tipo de evento em multiplos
+  // locais conhecidos. Se mesmo assim falhar, logamos o payload bruto
+  // para facilitar debug e seguimos com defaults razoaveis.
+  const extractEventType = (b: any): string => {
+    const candidates = [
+      b.event,
+      b.EventType,
+      b.event_type,
+      b.eventType,
+      b.type,
+      b.action
+    ].filter(v => typeof v === "string");
+    if (candidates[0]) return candidates[0];
+    // heuristic: olha o nome da chave no envelope
+    if (b.messages || b.message) return "messages";
+    if (b.connection || b.status) return "connection";
+    if (b.call) return "call";
+    if (b.contacts || b.contact) return "contacts";
+    if (b.presence) return "presence";
+    return "unknown";
+  };
+
+  const extractEventId = (b: any, evt: string): string | undefined => {
+    const tryFields = (obj: any) => {
+      if (!obj || typeof obj !== "object") return undefined;
+      return obj.id || obj.event_id || obj.eventId || obj.message_id || obj.messageId;
+    };
+    // top-level
+    let id = tryFields(b);
+    if (id) return String(id);
+    // dentro do envelope `data`/`payload`/`message`/`messages[0]`
+    id = tryFields(b.data) || tryFields(b.payload) || tryFields(b.message);
+    if (id) return String(id);
+    if (Array.isArray(b.messages) && b.messages[0]) {
+      id = tryFields(b.messages[0]);
+      if (id) return String(id);
+    }
+    if (Array.isArray(b.contacts) && b.contacts[0]) {
+      id = tryFields(b.contacts[0]) || b.contacts[0].jid || b.contacts[0].number;
+      if (id) return `${evt}:${id}:${b.contacts[0].timestamp || Date.now()}`;
+    }
+    return undefined;
+  };
+
+  const eventType = extractEventType(body);
+  let uazapiEventId = extractEventId(body, eventType);
 
   if (!uazapiEventId) {
+    // Sem id estavel, ainda processamos — geramos id sintetico baseado em
+    // hash do payload + timestamp para preservar idempotencia.
+    const synthetic = `${eventType}:${whatsapp.id}:${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    uazapiEventId = synthetic;
     logger.warn(
-      `[uazapi-webhook] payload sem id wid=${whatsapp.id} evt=${eventType}`
+      `[uazapi-webhook] payload sem id estavel wid=${whatsapp.id} evt=${eventType} ` +
+      `synth=${synthetic} payload=${JSON.stringify(body).slice(0, 600)}`
     );
-    return res.status(200).send("ok (no id)");
   }
 
   // 1) Idempotencia
