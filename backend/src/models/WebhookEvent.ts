@@ -27,7 +27,11 @@ import Whatsapp from "./Whatsapp";
  *
  * O par (uazapiEventId, whatsappId) e a chave logica de dedupe.
  */
-@Table({ tableName: "WebhookEvents" })
+// timestamps: false porque a tabela so tem `processedAt` (sem
+// createdAt/updatedAt). O default do Sequelize-typescript inclui
+// ambos automaticamente — desligamos para nao gerar SQL com campos
+// inexistentes.
+@Table({ tableName: "WebhookEvents", timestamps: false })
 class WebhookEvent extends Model<WebhookEvent> {
   @PrimaryKey
   @AutoIncrement

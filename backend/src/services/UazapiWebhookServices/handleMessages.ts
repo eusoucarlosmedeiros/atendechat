@@ -70,6 +70,90 @@ interface UazapiMessagePayload {
 }
 
 /**
+ * Normaliza um evento "messages" da uazapi para o formato que o restante
+ * do handler espera. A uazapi entrega payload com campos em PascalCase
+ * (Chat, Sender, IsFromMe, IsGroup, Body, MessageID, etc) — convertemos
+ * para snake_case/camelCase preservando o objeto original em [_raw].
+ *
+ * Tolera tambem providers que entregam campos em camelCase ou snake_case
+ * direto (sem o envelope event).
+ */
+const normalizeMessage = (raw: any): UazapiMessagePayload => {
+  if (!raw || typeof raw !== "object") {
+    return { id: "" } as UazapiMessagePayload;
+  }
+  const Info = raw.Info || {};
+  const MessageContent = raw.Message || {};
+
+  const id =
+    raw.id ||
+    raw.MessageID ||
+    raw.messageId ||
+    raw.message_id ||
+    Info.ID ||
+    Info.Id ||
+    Info.id ||
+    "";
+
+  const text =
+    raw.text ||
+    raw.Body ||
+    raw.body ||
+    raw.Text ||
+    raw.Conversation ||
+    raw.conversation ||
+    MessageContent.Conversation ||
+    MessageContent.ExtendedTextMessage?.Text ||
+    MessageContent.extendedTextMessage?.text ||
+    "";
+
+  const messageType =
+    raw.messageType ||
+    raw.MessageType ||
+    raw.type ||
+    raw.Type ||
+    (MessageContent.ImageMessage || MessageContent.imageMessage ? "image" :
+     MessageContent.VideoMessage || MessageContent.videoMessage ? "video" :
+     MessageContent.AudioMessage || MessageContent.audioMessage ? "audio" :
+     MessageContent.DocumentMessage || MessageContent.documentMessage ? "document" :
+     MessageContent.StickerMessage || MessageContent.stickerMessage ? "sticker" :
+     MessageContent.Conversation || MessageContent.conversation ? "conversation" :
+     "conversation");
+
+  const fromMe = raw.from_me ?? raw.fromMe ?? raw.IsFromMe ?? Info.IsFromMe ?? false;
+  const isGroup = raw.isGroup ?? raw.IsGroup ?? Info.IsGroup ?? false;
+
+  return {
+    id: String(id),
+    from: raw.from || raw.Chat || raw.chatid || Info.Chat || Info.RemoteJid || "",
+    to: raw.to || "",
+    from_me: !!fromMe,
+    fromMe: !!fromMe,
+    isGroup: !!isGroup,
+    groupId: raw.groupId || (isGroup ? (raw.Chat || raw.chatid) : undefined),
+    participant: raw.participant || raw.Sender || raw.sender_pn || Info.Sender,
+    pushName: raw.pushName || raw.PushName || Info.PushName,
+    wa_senderJid: raw.wa_senderJid || raw.sender_pn || raw.Sender || Info.Sender,
+    sender_lid: raw.sender_lid || raw.senderLid || raw.SenderLid,
+    senderJid: raw.senderJid || raw.wa_senderJid,
+    senderLid: raw.senderLid || raw.sender_lid,
+    text: typeof text === "string" ? text : "",
+    caption: raw.caption || raw.Caption,
+    body: raw.body || text,
+    messageType,
+    type: messageType,
+    media_url: raw.media_url || raw.mediaUrl || raw.MediaURL || raw.URL,
+    mediaUrl: raw.mediaUrl || raw.media_url,
+    mimetype: raw.mimetype || raw.Mimetype || raw.mime_type,
+    fileName: raw.fileName || raw.FileName || raw.filename,
+    timestamp: raw.timestamp || raw.Timestamp || Info.Timestamp,
+    status: raw.status || raw.Status,
+    reply_id: raw.reply_id || raw.replyId || raw.ReplyID,
+    ...raw // preserva campos originais para debug/futuro
+  };
+};
+
+/**
  * Determina se a mensagem deve ser ignorada antes do processamento pesado.
  */
 const shouldFilter = (msg: UazapiMessagePayload): boolean => {
@@ -282,25 +366,41 @@ const handleMessages = async (
   payload: any,
   whatsapp: Whatsapp
 ): Promise<void> => {
-  // Payload pode vir como objeto unico OU como { messages: [...] }
-  const messages: UazapiMessagePayload[] = Array.isArray(payload?.messages)
+  // Payload pode vir como:
+  //   - objeto unico (envelope ja desempacotado pelo router)
+  //   - array de mensagens
+  //   - { messages: [...] } (raro)
+  const rawList: any[] = Array.isArray(payload?.messages)
     ? payload.messages
     : Array.isArray(payload)
     ? payload
     : [payload];
 
+  const messages: UazapiMessagePayload[] = rawList
+    .filter(r => r && typeof r === "object")
+    .map(normalizeMessage);
+
   for (const msg of messages) {
-    if (!msg || !msg.id) continue;
+    if (!msg.id) {
+      logger.warn(
+        `[uazapi] handleMessages: payload sem id wid=${whatsapp.id} ` +
+        `payload=${JSON.stringify(msg).slice(0, 500)}`
+      );
+      continue;
+    }
     if (shouldFilter(msg)) continue;
 
     try {
       await processSingleMessage(msg, whatsapp);
-    } catch (err) {
+      logger.info(
+        `[uazapi] handleMessages persistido msg=${msg.id} from=${msg.from} fromMe=${msg.from_me} wid=${whatsapp.id}`
+      );
+    } catch (err: any) {
       Sentry.captureException(err, {
         tags: { source: "handleMessages", whatsappId: whatsapp.id, msgId: msg.id }
       });
       logger.error(
-        `[uazapi] handleMessages erro msg=${msg.id} wid=${whatsapp.id}: ${err}`
+        `[uazapi] handleMessages erro msg=${msg.id} wid=${whatsapp.id}: ${err?.message || err}`
       );
     }
   }
