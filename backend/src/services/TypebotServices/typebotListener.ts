@@ -69,11 +69,11 @@ const typebotListener = async ({
     sender: () => Promise<unknown>
   ): Promise<void> => {
     try {
-      await SendPresence(whatsapp, { number: remoteJid, type: "composing" });
+      await SendPresence(whatsapp, { number: remoteJid, presence: "composing" });
     } catch (_) { /* nao bloqueante */ }
     if (delayMs > 0) await sleep(delayMs);
     try {
-      await SendPresence(whatsapp, { number: remoteJid, type: "paused" });
+      await SendPresence(whatsapp, { number: remoteJid, presence: "paused" });
     } catch (_) { /* nao bloqueante */ }
     await sender();
   };

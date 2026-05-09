@@ -33,17 +33,19 @@ const SetTicketMessagesAsRead = async (ticket: Ticket): Promise<void> => {
         : ticket.isGroup
         ? `${ticket.contact.number}@g.us`
         : ticket.contact.number;
-      await ReadChat(whatsapp, { number, readAll: true });
+      await ReadChat(whatsapp, { number, read: true });
     }
 
     await Message.update(
       { read: true },
       { where: { ticketId: ticket.id, read: false } }
     );
-  } catch (err) {
+  } catch (err: any) {
+    // err pode ser AppError ou Error puro. Nunca usa template string crua
+    // que gera "[object Object]".
+    const detail = err?.message || err?.uazapiCode || "?";
     logger.warn(
-      `SetTicketMessagesAsRead falhou (ticket=${ticket.id}). ` +
-      `Sessao desconectada ou uazapi off? Err: ${err}`
+      `SetTicketMessagesAsRead falhou (ticket=${ticket.id}): ${detail}`
     );
   }
 
