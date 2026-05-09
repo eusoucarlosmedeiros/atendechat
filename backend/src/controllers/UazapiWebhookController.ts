@@ -57,15 +57,22 @@ const handle = async (req: Request, res: Response): Promise<Response> => {
   };
 
   const extractEventId = (b: any, evt: string): string | undefined => {
+    // Para messages/messages_update: spec uazapi expoe `messageid`
+    // (ID original WhatsApp) e `id` (ID interno uazapi) DENTRO de
+    // `b.message`. Idempotencia ideal: messageid (estavel entre re-syncs).
+    if ((evt === "messages" || evt === "messages_update") && b.message && typeof b.message === "object") {
+      const m: any = b.message;
+      if (m.messageid) return String(m.messageid);
+      if (m.id) return String(m.id);
+    }
+    // Outros eventos: top-level e fallbacks
     const tryFields = (obj: any) => {
       if (!obj || typeof obj !== "object") return undefined;
-      return obj.id || obj.event_id || obj.eventId || obj.message_id || obj.messageId;
+      return obj.id || obj.event_id || obj.eventId || obj.message_id || obj.messageId || obj.messageid;
     };
-    // top-level
     let id = tryFields(b);
     if (id) return String(id);
-    // dentro do envelope `data`/`payload`/`message`/`messages[0]`
-    id = tryFields(b.data) || tryFields(b.payload) || tryFields(b.message);
+    id = tryFields(b.data) || tryFields(b.payload) || tryFields(b.message) || tryFields(b.event);
     if (id) return String(id);
     if (Array.isArray(b.messages) && b.messages[0]) {
       id = tryFields(b.messages[0]);

@@ -8,54 +8,39 @@ import handlePresence from "./handlePresence";
 import { logger } from "../../utils/logger";
 
 /**
- * Desencapsula o envelope da uazapi.
- *
- * Formato real visto em producao:
- *   {
- *     "BaseUrl": "...",
- *     "EventType": "messages" | "contacts" | "presence" | ...,
- *     "event": { ...dados reais do evento... },
- *     "instanceName": "...",
- *     "owner": "...",
- *     "token": "...",
- *     "type": "..."
- *   }
- *
- * Os handlers recebem o conteudo de `event` (quando existir), nao o
- * envelope. Quando nao houver envelope, passamos o payload bruto
- * (compatibilidade com providers que entregam direto).
- */
-const unwrap = (payload: any): any => {
-  if (payload && typeof payload === "object" && payload.event && typeof payload.event === "object") {
-    return payload.event;
-  }
-  return payload;
-};
-
-/**
  * Despacha um evento da uazapi para o handler apropriado.
- * Eventos desconhecidos sao apenas logados (sem erro).
+ *
+ * Formatos do envelope (conforme schemas Chat e Message do
+ * uazapi-openapi-spec.yaml linhas 249-648):
+ *
+ * - messages / messages_update:
+ *     { BaseUrl, EventType, chat: {Chat schema}, message: {Message schema}, ... }
+ *
+ * - contacts / presence / connection / call:
+ *     { BaseUrl, EventType, event: { ... }, ... }
+ *
+ * Para messages, passamos o payload INTEIRO porque o handler precisa
+ * tanto de `chat` quanto de `message`. Para os outros, desempacotamos
+ * em `event`.
  */
 export const dispatch = async (
   eventType: string,
   payload: any,
   whatsapp: Whatsapp
 ): Promise<void> => {
-  const inner = unwrap(payload);
-
   switch (eventType) {
     case "messages":
-      return handleMessages(inner, whatsapp);
+      return handleMessages(payload, whatsapp);
     case "messages_update":
-      return handleMessagesUpdate(inner, whatsapp);
+      return handleMessagesUpdate(payload, whatsapp);
     case "connection":
-      return handleConnection(inner, whatsapp);
+      return handleConnection(payload?.event || payload, whatsapp);
     case "call":
-      return handleCall(inner, whatsapp);
+      return handleCall(payload?.event || payload, whatsapp);
     case "contacts":
-      return handleContacts(inner, whatsapp);
+      return handleContacts(payload?.event || payload, whatsapp);
     case "presence":
-      return handlePresence(inner, whatsapp);
+      return handlePresence(payload?.event || payload, whatsapp);
     case "history":
       logger.info(`[uazapi] history recebido para wid=${whatsapp.id} — ignorado`);
       return;
