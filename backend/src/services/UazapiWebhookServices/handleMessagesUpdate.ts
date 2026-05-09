@@ -22,16 +22,22 @@ import { logger } from "../../utils/logger";
  *   }
  */
 
+// Mapeamento alinhado com a convencao Baileys/legacy do frontend:
+//   1 = Pending (relogio)
+//   2 = Sent / Server ACK (1 check)
+//   3 = Delivered (2 checks)
+//   4 = Read (2 checks azuis)
+//   5 = Played (audio ouvido)
 const STATUS_TO_ACK: Record<string, number> = {
-  pending: 0,
-  sent: 1,
-  server_ack: 1,
-  delivered: 2,
-  delivery_ack: 2,
-  read: 3,
-  read_self: 3,
-  played: 4,
-  played_self: 4
+  pending: 1,
+  sent: 2,
+  server_ack: 2,
+  delivered: 3,
+  delivery_ack: 3,
+  read: 4,
+  read_self: 4,
+  played: 5,
+  played_self: 5
 };
 
 /**

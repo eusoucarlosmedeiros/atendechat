@@ -65,7 +65,10 @@ const SendWhatsAppMessage = async ({
             read: true,
             mediaType: "conversation",
             quotedMsgId: quotedMsg?.id,
-            ack: 1, // Sent (1 check). Updates de Delivered/Read vem via webhook.
+            // Frontend legacy (Baileys-compativel): ack=1=Pending(relogio),
+            // 2=Sent(1 check), 3=Delivered(2 checks), 4=Read(2 azuis), 5=Played.
+            // Como a uazapi ja respondeu 200 com id, marcamos como Sent (2).
+            ack: 2,
             remoteJid: number,
             dataJson: JSON.stringify(response)
           } as any,

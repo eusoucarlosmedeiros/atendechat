@@ -180,7 +180,9 @@ const SendWhatsAppMedia = async ({
             read: true,
             mediaUrl: localFileName,
             mediaType: uiMediaType,
-            ack: 1,
+            // Frontend legacy: 1=Pending,2=Sent,3=Delivered,4=Read,5=Played.
+            // uazapi ja confirmou recepcao -> Sent.
+            ack: 2,
             remoteJid: number,
             dataJson: JSON.stringify(response)
           } as any,
