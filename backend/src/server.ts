@@ -7,10 +7,15 @@ import Company from "./models/Company";
 import { startQueueProcess } from "./queues";
 import { TransferTicketQueue } from "./wbotTransferTicketQueue";
 import { startWebhookEventsCleanup } from "./jobs/webhookEventsCleanup";
+import { startUazapiStatusSync } from "./jobs/uazapiStatusSync";
 import cron from "node-cron";
 
 // Cleanup job dos WebhookEvents da uazapi (retencao 30d).
 startWebhookEventsCleanup();
+
+// Polling de status da uazapi (defesa em profundidade vs webhook
+// faltando — sincroniza Whatsapps a cada 30s).
+startUazapiStatusSync();
 
 const server = app.listen(process.env.PORT, async () => {
   const companies = await Company.findAll();

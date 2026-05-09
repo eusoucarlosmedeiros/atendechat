@@ -12,6 +12,7 @@
 export { default as InitInstance } from "./instance/InitInstance";
 export { default as ConnectInstance } from "./instance/ConnectInstance";
 export { default as DisconnectInstance } from "./instance/DisconnectInstance";
+export { default as DeleteInstance } from "./instance/DeleteInstance";
 export { default as GetInstanceStatus } from "./instance/GetInstanceStatus";
 export { default as ConfigureWebhook } from "./instance/ConfigureWebhook";
 

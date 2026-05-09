@@ -11,6 +11,7 @@ import ConnectInstance from "../UazapiServices/instance/ConnectInstance";
 import DisconnectInstance from "../UazapiServices/instance/DisconnectInstance";
 import GetInstanceStatus from "../UazapiServices/instance/GetInstanceStatus";
 import ConfigureWebhook from "../UazapiServices/instance/ConfigureWebhook";
+import { syncWhatsappStatus } from "../../jobs/uazapiStatusSync";
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
