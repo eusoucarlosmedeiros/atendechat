@@ -116,7 +116,11 @@ const SendWhatsAppMedia = async ({
     const whatsapp = await ShowWhatsAppService(ticket.whatsappId, ticket.companyId);
     const bodyMessage = body ? formatBody(body, ticket.contact) : undefined;
 
-    const number = ticket.isGroup
+    // Prefere o remoteJid (JID original) — fonte de verdade pra uazapi.
+    const contactJid = (ticket.contact as any).remoteJid;
+    const number = contactJid
+      ? contactJid
+      : ticket.isGroup
       ? `${ticket.contact.number}@g.us`
       : ticket.contact.number;
 

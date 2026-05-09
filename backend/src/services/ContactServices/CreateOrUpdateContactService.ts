@@ -17,9 +17,11 @@ interface Request {
   extraInfo?: ExtraInfo[];
   whatsappId?: number;
   // Locally Identifiable Device do WhatsApp (so a parte numerica, sem @lid).
-  // Quando setado, e persistido para que SendWhatsApp* possam usar como
-  // destinatario quando o telefone real (number) nao for confiavel.
   lid?: string;
+  // JID completo recebido pela uazapi (ex.: "5511XXX@s.whatsapp.net" ou
+  // "XXX@lid"). E a fonte de verdade para enviar — passamos direto no
+  // campo `number` dos endpoints uazapi.
+  remoteJid?: string;
 }
 
 const CreateOrUpdateContactService = async ({
@@ -31,7 +33,8 @@ const CreateOrUpdateContactService = async ({
   companyId,
   extraInfo = [],
   whatsappId,
-  lid
+  lid,
+  remoteJid
 }: Request): Promise<Contact> => {
   const number = isGroup ? rawNumber : rawNumber.replace(/[^0-9]/g, "");
   const cleanLid = lid ? lid.replace(/\D/g, "") : undefined;
@@ -50,6 +53,9 @@ const CreateOrUpdateContactService = async ({
     const updates: Partial<Contact> = { profilePicUrl };
     if (cleanLid && contact.lid !== cleanLid) {
       updates.lid = cleanLid;
+    }
+    if (remoteJid && contact.remoteJid !== remoteJid) {
+      updates.remoteJid = remoteJid;
     }
     // Se chegou um number "real" e o contato estava com number = LID, atualiza.
     if (!isGroup && contact.number !== number && /^\d{8,15}$/.test(number)) {
@@ -73,7 +79,8 @@ const CreateOrUpdateContactService = async ({
       extraInfo,
       companyId,
       whatsappId,
-      lid: cleanLid
+      lid: cleanLid,
+      remoteJid
     });
 
     io.to(`company-${companyId}-mainchannel`).emit(`company-${companyId}-contact`, {

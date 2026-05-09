@@ -237,13 +237,16 @@ const processSingleMessage = async (
       isGroup: true,
       profilePicUrl: chat.image || undefined,
       companyId: whatsapp.companyId,
-      whatsappId: whatsapp.id
+      whatsappId: whatsapp.id,
+      remoteJid: chatJid // <id>@g.us — fonte de verdade pra envio
     });
 
     // Sender individual: prefere sender_pn (PN resolvido) e usa sender_lid
-    // como fallback. msg.sender (ID interno uazapi) nao serve aqui.
-    const senderJid = msg.sender_pn || msg.sender || msg.sender_lid || "";
-    const senderNumber = jidToNumber(senderJid);
+    // como fallback.
+    const senderPnJid = msg.sender_pn || "";
+    const senderLidJid = msg.sender_lid || "";
+    const senderJidForSend = senderPnJid || senderLidJid;
+    const senderNumber = jidToNumber(senderPnJid || senderLidJid);
     if (senderNumber) {
       groupSender = await CreateOrUpdateContactService({
         name: msg.senderName || senderNumber,
@@ -251,11 +254,13 @@ const processSingleMessage = async (
         isGroup: false,
         companyId: whatsapp.companyId,
         whatsappId: whatsapp.id,
-        lid: msg.sender_lid ? jidToNumber(msg.sender_lid) : undefined
+        lid: senderLidJid ? jidToNumber(senderLidJid) : undefined,
+        remoteJid: senderJidForSend
       });
     }
   } else {
-    // 1:1 — usa sender_pn (PN resolvido) se disponivel; cai pro JID do chat.
+    // 1:1 — fonte de verdade pra envio: chat.wa_chatid (PN ou LID original).
+    // Number "limpo" pra exibicao: prefere chat.phone -> sender_pn -> chatJid.
     const number = jidToNumber(chat.phone || msg.sender_pn || chatJid);
     contact = await CreateOrUpdateContactService({
       name: msg.senderName || chat.name || chat.wa_name || chat.wa_contactName || number,
@@ -268,7 +273,8 @@ const processSingleMessage = async (
         ? jidToNumber(msg.sender_lid)
         : chat.wa_chatlid
         ? jidToNumber(chat.wa_chatlid)
-        : undefined
+        : undefined,
+      remoteJid: chatJid // <num>@s.whatsapp.net OU <lid>@lid — fonte verdade
     });
   }
 

@@ -42,6 +42,13 @@ class Contact extends Model<Contact> {
   @Column
   lid: string;
 
+  // JID completo do chat na uazapi (ex.: "5511999999999@s.whatsapp.net",
+  // "<id>@g.us", "<lid>@lid"). E a fonte de verdade para envios — passamos
+  // este valor direto no campo `number` da uazapi, evitando reconstrucao
+  // errada quando contact.number e na verdade um LID.
+  @Column
+  remoteJid: string;
+
   @AllowNull(false)
   @Default("")
   @Column

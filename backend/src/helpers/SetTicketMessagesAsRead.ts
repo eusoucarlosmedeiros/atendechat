@@ -25,7 +25,12 @@ const SetTicketMessagesAsRead = async (ticket: Ticket): Promise<void> => {
         ticket.whatsappId,
         ticket.companyId
       );
-      const number = ticket.isGroup
+      // Prefere remoteJid (JID original recebido) sobre construir
+      // <number>@s.whatsapp.net — evita 500 quando number e LID.
+      const contactJid = (ticket.contact as any).remoteJid;
+      const number = contactJid
+        ? contactJid
+        : ticket.isGroup
         ? `${ticket.contact.number}@g.us`
         : ticket.contact.number;
       await ReadChat(whatsapp, { number, readAll: true });

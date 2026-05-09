@@ -33,17 +33,20 @@ export const getUazapiClient = (whatsapp: Whatsapp): AxiosInstance => {
     }
   });
 
-  // Retry em network errors e 5xx — NAO retentar em 429 nem em 4xx (exceto
-  // 408/timeout). 429 e propagado para o caller decidir backoff via fila.
+  // Retry APENAS em network errors / timeouts. Nao retentamos 5xx nem 4xx
+  // porque:
+  //   - 5xx pode persistir (ex.: uazapi rejeitando JID invalido) e retentar
+  //     so amplifica o erro nos logs (acoes nao sao idempotentes em geral).
+  //   - 429 = rate limit; o caller decide via fila Bull.
+  //   - 4xx = bad request; cliente errou, nao adianta retentar.
   axiosRetry(client, {
-    retries: 3,
+    retries: 2,
     retryDelay: axiosRetry.exponentialDelay,
     retryCondition: (err) => {
-      if (axiosRetry.isNetworkOrIdempotentRequestError(err)) return true;
-      const status = err.response?.status;
-      if (status && status >= 500 && status < 600) return true;
-      if (status === 408) return true;
-      return false;
+      // Sem response = timeout ou conexao caiu
+      if (!err.response) return true;
+      // 408 (timeout server-side) tambem retenta
+      return err.response.status === 408;
     }
   });
 
@@ -57,9 +60,14 @@ export const getUazapiClient = (whatsapp: Whatsapp): AxiosInstance => {
       logger.debug(`[uazapi:${whatsapp.id}] <- ${res.config.url} ${res.status}`);
       return res;
     },
-    (err: AxiosError) => {
+    (err: any) => {
+      // Se ja e um AppError (re-execucao por axios-retry pode passar pelo
+      // interceptor mais de uma vez), propaga sem re-traduzir.
+      if (err && err.uazapiCode) {
+        throw err;
+      }
       logger.warn(
-        `[uazapi:${whatsapp.id}] error ${err.config?.url} -> ${err.response?.status || "network"}: ${err.message}`
+        `[uazapi:${whatsapp.id}] error ${err.config?.url || "?"} -> ${err.response?.status || "network"}: ${err.message}`
       );
       throw translateUazapiError(err);
     }
@@ -72,8 +80,10 @@ export const getUazapiClient = (whatsapp: Whatsapp): AxiosInstance => {
  * Traduz AxiosError em AppError com codes consistentes para o restante do
  * sistema. Mantem o erro original em metadata para investigacao.
  */
-export const translateUazapiError = (err: AxiosError): AppError => {
-  const status = err.response?.status;
+export const translateUazapiError = (err: any): AppError => {
+  // Idempotente: se ja foi traduzido, devolve como esta.
+  if (err && err.uazapiCode) return err as AppError;
+  const status = err?.response?.status;
   const data: any = err.response?.data;
   const upstreamMessage = data?.error || data?.message || err.message;
 

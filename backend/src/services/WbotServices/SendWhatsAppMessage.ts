@@ -33,7 +33,13 @@ const SendWhatsAppMessage = async ({
 }: Request): Promise<SendMessageResponse> => {
   const whatsapp = await ShowWhatsAppService(ticket.whatsappId, ticket.companyId);
 
-  const number = ticket.isGroup
+  // Preferimos o remoteJid persistido (JID original recebido pela uazapi)
+  // — e a fonte de verdade. Cai em fallback para construcao a partir do
+  // number quando contato e antigo (pre-migracao).
+  const contactJid = (ticket.contact as any).remoteJid;
+  const number = contactJid
+    ? contactJid
+    : ticket.isGroup
     ? `${ticket.contact.number}@g.us`
     : ticket.contact.number;
 
