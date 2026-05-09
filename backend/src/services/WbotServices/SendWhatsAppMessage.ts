@@ -3,6 +3,7 @@ import AppError from "../../errors/AppError";
 import Message from "../../models/Message";
 import Ticket from "../../models/Ticket";
 import ShowWhatsAppService from "../WhatsappService/ShowWhatsAppService";
+import CreateMessageService from "../MessageServices/CreateMessageService";
 import SendText, {
   SendMessageResponse
 } from "../UazapiServices/send/SendText";
@@ -15,16 +16,17 @@ interface Request {
 }
 
 /**
- * Envia mensagem de texto via uazapi.
+ * Envia mensagem de texto via uazapi e persiste a Message no banco
+ * imediatamente apos sucesso da uazapi.
  *
- * - Para 1:1: passa o `Contact.number` puro (E.164). uazapi resolve LID
- *   internamente, eliminando todo o drama da Baileys com @lid.
- * - Para grupo: passa `<groupId>@g.us`.
- * - Quote/reply: usa o id da mensagem original em `replyid`.
+ * IMPORTANTE: configuramos webhook com excludeMessages=["wasSentByApi"]
+ * (evita loop de auto-eco). Por isso o webhook NAO entrega de volta a
+ * mensagem que a propria API enviou. Se nao persistirmos aqui, a
+ * mensagem nunca aparece no chat do ticket.
  *
- * A persistencia da Message fica para quando o webhook 'messages' chegar
- * com `from_me: true` — handleMessages faz o upsert. Devolvemos so o que
- * a uazapi respondeu (id + status + timestamp) para o caller.
+ * Spec /send/text response: schema Message + { response: {...} }
+ * Campos relevantes do response: messageid (ID original WhatsApp) ou
+ * id (ID interno uazapi).
  */
 const SendWhatsAppMessage = async ({
   body,
@@ -33,9 +35,6 @@ const SendWhatsAppMessage = async ({
 }: Request): Promise<SendMessageResponse> => {
   const whatsapp = await ShowWhatsAppService(ticket.whatsappId, ticket.companyId);
 
-  // Preferimos o remoteJid persistido (JID original recebido pela uazapi)
-  // — e a fonte de verdade. Cai em fallback para construcao a partir do
-  // number quando contato e antigo (pre-migracao).
   const contactJid = (ticket.contact as any).remoteJid;
   const number = contactJid
     ? contactJid
@@ -45,14 +44,44 @@ const SendWhatsAppMessage = async ({
 
   try {
     const formatted = formatBody(body, ticket.contact);
-    const response = await SendText(whatsapp, {
+    const response: any = await SendText(whatsapp, {
       number,
       text: formatted,
       replyid: quotedMsg?.id
     });
+
+    // ID estavel para o registro local. Prioriza messageid (ID WhatsApp)
+    // pois sobrevive a re-syncs e e o que aparece em messages_update.
+    const messageId = response?.messageid || response?.id;
+
+    if (messageId) {
+      try {
+        await CreateMessageService({
+          messageData: {
+            id: String(messageId),
+            ticketId: ticket.id,
+            body: formatted,
+            fromMe: true,
+            read: true,
+            mediaType: "conversation",
+            quotedMsgId: quotedMsg?.id,
+            ack: 1, // Sent (1 check). Updates de Delivered/Read vem via webhook.
+            remoteJid: number,
+            dataJson: JSON.stringify(response)
+          } as any,
+          companyId: ticket.companyId
+        });
+      } catch (persistErr: any) {
+        // Se ja existe (idempotencia — webhook chegou antes), ignora.
+        if (!String(persistErr?.message || "").includes("Validation")) {
+          Sentry.captureException(persistErr);
+        }
+      }
+    }
+
     await ticket.update({ lastMessage: formatted });
     return response;
-  } catch (err) {
+  } catch (err: any) {
     Sentry.captureException(err);
     console.log(err);
     throw new AppError("ERR_SENDING_WAPP_MSG");

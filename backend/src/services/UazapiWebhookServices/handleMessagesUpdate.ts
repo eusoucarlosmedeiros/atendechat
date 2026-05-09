@@ -4,17 +4,24 @@ import { getIO } from "../../libs/socket";
 import { logger } from "../../utils/logger";
 
 /**
- * Handler do evento `messages_update` — atualiza status (ack) de mensagens
- * que ja enviamos. Tambem cobre `delete` e edicoes.
+ * Schema do evento `messages_update` (uazapi).
  *
- * Mapeamento de status uazapi -> ack interno (mantido compativel com o
- * sistema atual, que ja usa numeros para representar os checks):
- *   Pending   = 0
- *   Sent      = 1   (1 check)
- *   Delivered = 2   (2 checks)
- *   Read      = 3   (2 checks azuis)
- *   Played    = 4   (audio ouvido)
+ * Formato real visto em producao:
+ *   {
+ *     "EventType": "messages_update",
+ *     "event": {
+ *       "Chat": "...",
+ *       "IsFromMe": false,
+ *       "MessageIDs": ["3EB0..."],   // <- ARRAY (plural)
+ *       "Sender": "...",
+ *       "Timestamp": 1778289276,
+ *       "Type": "Delivered"           // Sent | Delivered | Read | Played
+ *     },
+ *     "state": "Delivered",
+ *     "type": "ReadReceipt"
+ *   }
  */
+
 const STATUS_TO_ACK: Record<string, number> = {
   pending: 0,
   sent: 1,
@@ -27,55 +34,80 @@ const STATUS_TO_ACK: Record<string, number> = {
   played_self: 4
 };
 
+/**
+ * Handler do evento `messages_update`. Recebe o `event` ja desempacotado
+ * pelo router (vide router.ts: payload?.event || payload).
+ */
 const handleMessagesUpdate = async (
   payload: any,
   whatsapp: Whatsapp
 ): Promise<void> => {
-  const messageId: string =
-    payload.id || payload.message_id || payload.messageId || "";
-  if (!messageId) {
-    logger.warn(`[uazapi] messages_update sem id (wid=${whatsapp.id})`);
+  const evt = payload || {};
+
+  // MessageIDs vem como array (plural). Em raros providers pode vir
+  // singular como id/MessageID. Tolera ambos.
+  const messageIds: string[] = Array.isArray(evt.MessageIDs)
+    ? evt.MessageIDs
+    : evt.id
+    ? [evt.id]
+    : evt.messageid
+    ? [evt.messageid]
+    : [];
+
+  if (messageIds.length === 0) {
+    logger.warn(
+      `[uazapi] messages_update sem MessageIDs (wid=${whatsapp.id}) ` +
+      `payload=${JSON.stringify(evt).slice(0, 400)}`
+    );
     return;
   }
 
-  // Status ou edited?
-  const status: string = (payload.status || "").toString().toLowerCase();
-  const ack = STATUS_TO_ACK[status];
+  // Type vem em PascalCase no event; state/Status no envelope. Normaliza.
+  const rawStatus = (evt.Type || evt.state || evt.status || "").toString().toLowerCase();
+  const ack = STATUS_TO_ACK[rawStatus];
 
-  const message = await Message.findByPk(messageId, { include: ["ticket"] });
-  if (!message) {
-    // Pode ser update de mensagem que nao foi persistida ainda. Skip.
-    return;
-  }
+  for (const id of messageIds) {
+    try {
+      const message = await Message.findByPk(String(id), { include: ["ticket"] });
+      if (!message) continue;
 
-  const updates: any = {};
-  if (ack !== undefined && ack > (message.ack || 0)) {
-    updates.ack = ack;
-  }
-  if (payload.deleted === true || status === "deleted") {
-    updates.isDeleted = true;
-  }
-  if (payload.edited === true && payload.text) {
-    updates.body = payload.text;
-    updates.isEdited = true;
-  }
+      const updates: any = {};
+      if (ack !== undefined && ack > (message.ack || 0)) {
+        updates.ack = ack;
+      }
+      if (evt.deleted === true || rawStatus === "deleted") {
+        updates.isDeleted = true;
+      }
+      if (evt.edited === true && evt.text) {
+        updates.body = evt.text;
+        updates.isEdited = true;
+      }
+      if (Object.keys(updates).length === 0) continue;
 
-  if (Object.keys(updates).length === 0) return;
+      await message.update(updates);
+      await message.reload();
 
-  await message.update(updates);
-  await message.reload();
+      const io = getIO();
+      if (message.ticket) {
+        io.to(message.ticketId.toString())
+          .to(`company-${whatsapp.companyId}-${message.ticket.status}`)
+          .to(`company-${whatsapp.companyId}-notification`)
+          .emit(`company-${whatsapp.companyId}-appMessage`, {
+            action: "update",
+            message,
+            ticket: message.ticket,
+            contact: message.ticket.contact
+          });
+      }
 
-  const io = getIO();
-  if (message.ticket) {
-    io.to(message.ticketId.toString())
-      .to(`company-${whatsapp.companyId}-${message.ticket.status}`)
-      .to(`company-${whatsapp.companyId}-notification`)
-      .emit(`company-${whatsapp.companyId}-appMessage`, {
-        action: "update",
-        message,
-        ticket: message.ticket,
-        contact: message.ticket.contact
-      });
+      logger.debug(
+        `[uazapi] messages_update msg=${id} ack=${updates.ack} wid=${whatsapp.id}`
+      );
+    } catch (err: any) {
+      logger.warn(
+        `[uazapi] messages_update erro msg=${id} wid=${whatsapp.id}: ${err?.message || err}`
+      );
+    }
   }
 };
 

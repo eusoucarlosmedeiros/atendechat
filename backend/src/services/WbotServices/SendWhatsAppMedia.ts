@@ -8,6 +8,7 @@ import { lookup } from "mime-types";
 import AppError from "../../errors/AppError";
 import Ticket from "../../models/Ticket";
 import ShowWhatsAppService from "../WhatsappService/ShowWhatsAppService";
+import CreateMessageService from "../MessageServices/CreateMessageService";
 import SendMedia, {
   SendMediaParams,
   UazapiMediaType
@@ -152,7 +153,7 @@ const SendWhatsAppMedia = async ({
     const fileBuffer = fs.readFileSync(finalPath);
     const fileBase64 = `data:${finalMime};base64,${fileBuffer.toString("base64")}`;
 
-    const response = await SendMedia(whatsapp, {
+    const response: any = await SendMedia(whatsapp, {
       number,
       type,
       file: fileBase64,
@@ -161,8 +162,41 @@ const SendWhatsAppMedia = async ({
       docName
     });
 
+    // Persiste a Message localmente (webhook nao ecoa por causa do
+    // excludeMessages=wasSentByApi). messageid > id como ID estavel.
+    const messageId = response?.messageid || response?.id;
+    if (messageId) {
+      // mediaType compativel com a UI legacy (image/video/audio/document).
+      // ptt eh tratado como audio na UI; outros tipos passam direto.
+      const uiMediaType: string = type === "ptt" ? "audio" : type;
+      const localFileName = path.basename(finalPath);
+      try {
+        await CreateMessageService({
+          messageData: {
+            id: String(messageId),
+            ticketId: ticket.id,
+            body: bodyMessage || `[${uiMediaType}]`,
+            fromMe: true,
+            read: true,
+            mediaUrl: localFileName,
+            mediaType: uiMediaType,
+            ack: 1,
+            remoteJid: number,
+            dataJson: JSON.stringify(response)
+          } as any,
+          companyId: ticket.companyId
+        });
+      } catch (persistErr: any) {
+        if (!String(persistErr?.message || "").includes("Validation")) {
+          Sentry.captureException(persistErr);
+        }
+      }
+    }
+
     if (bodyMessage) {
       await ticket.update({ lastMessage: bodyMessage });
+    } else {
+      await ticket.update({ lastMessage: `[${type}]` });
     }
 
     return response;
