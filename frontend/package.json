@@ -25,6 +25,7 @@
     "context": "^4.0.0",
     "date-fns": "^2.16.1",
     "emoji-mart": "^3.0.0",
+    "express": "^4.19.2",
     "formik": "^2.2.0",
     "formik-material-ui": "^3.0.1",
     "gn-api-sdk-node": "^3.0.2",
