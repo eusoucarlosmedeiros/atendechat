@@ -4,6 +4,7 @@ import * as Sentry from "@sentry/node";
 import Whatsapp from "../../models/Whatsapp";
 import { getIO } from "../../libs/socket";
 import { logger } from "../../utils/logger";
+import AppError from "../../errors/AppError";
 
 import InitInstance from "../UazapiServices/instance/InitInstance";
 import ConnectInstance from "../UazapiServices/instance/ConnectInstance";
@@ -12,6 +13,24 @@ import GetInstanceStatus from "../UazapiServices/instance/GetInstanceStatus";
 import ConfigureWebhook from "../UazapiServices/instance/ConfigureWebhook";
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+
+/**
+ * Lock por whatsappId — impede chamadas concorrentes de StartWhatsAppSession
+ * para o mesmo WhatsApp (clique multiplo no painel, eventos de socket, etc).
+ * Se ja tem uma rodando, novas chamadas retornam de imediato sem bater na uazapi.
+ */
+const startInProgress = new Set<number>();
+
+/**
+ * Extrai mensagem legivel de um erro qualquer (AppError, AxiosError, Error puro).
+ */
+const errMessage = (err: any): string => {
+  if (!err) return "(sem detalhes)";
+  if (err.uazapiCode) return `${err.uazapiCode}: ${err.message || ""}`;
+  if (err.message) return err.message;
+  if (typeof err === "string") return err;
+  try { return JSON.stringify(err); } catch (_) { return String(err); }
+};
 
 /**
  * StartWhatsAppSession (uazapi) — substitui o initWASocket da Baileys.
@@ -32,6 +51,15 @@ export const StartWhatsAppSession = async (
   whatsapp: Whatsapp,
   companyId: number
 ): Promise<void> => {
+  // Lock anti-concorrencia
+  if (startInProgress.has(whatsapp.id)) {
+    logger.warn(
+      `[uazapi] StartWhatsAppSession ignorado: wid=${whatsapp.id} ja em progresso`
+    );
+    return;
+  }
+  startInProgress.add(whatsapp.id);
+
   await whatsapp.update({ status: "OPENING" });
 
   const io = getIO();
@@ -142,10 +170,28 @@ export const StartWhatsAppSession = async (
     logger.info(
       `[uazapi] StartWhatsAppSession ok wid=${whatsapp.id} status=${whatsapp.status} hasQr=${!!whatsapp.qrcode}`
     );
-  } catch (err) {
+  } catch (err: any) {
     Sentry.captureException(err);
-    logger.error(`[uazapi] StartWhatsAppSession falhou wid=${whatsapp.id}: ${err}`);
 
+    // Mensagem util em vez de [object Object]
+    const msg = errMessage(err);
+    const code = err?.uazapiCode || "";
+    logger.error(
+      `[uazapi] StartWhatsAppSession falhou wid=${whatsapp.id} code=${code} msg=${msg}`
+    );
+
+    // 429 = rate limit / limite de plano. Mensagem direta pro frontend.
+    if (code === "ERR_UAZAPI_RATE_LIMITED") {
+      logger.error(
+        `[uazapi] LIMITE atingido na uazapi. Possiveis causas: ` +
+        `(1) muitas instancias ativas no plano, (2) rate limit por minuto, ` +
+        `(3) instancias orfas — verifique no painel uazapi e delete as nao usadas.`
+      );
+    }
+
+    // Rollback so quando a falha foi DEPOIS do init bem-sucedido (ou seja,
+    // ja temos token). Se falhou no proprio /instance/init, nao tem o que
+    // desconectar.
     try {
       if (whatsapp.uazapiInstanceId && whatsapp.uazapiToken) {
         try { await DisconnectInstance(whatsapp); } catch (_) { /* noop */ }
@@ -157,5 +203,7 @@ export const StartWhatsAppSession = async (
       qrcode: ""
     });
     emitUpdate();
+  } finally {
+    startInProgress.delete(whatsapp.id);
   }
 };
